@@ -6,8 +6,19 @@ plugins {
 android {
     namespace = "me.rerere.workspace"
 
-    // 原生库改为使用预编译产物，原因同 :terminal（见 FORK.md「构建环境」）。
-    // libworkspace.so 取自官方 3.1.1 arm64-v8a release APK；源码仍在 src/main/cpp/。
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                cppFlags += ""
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 }
 
 dependencies {
