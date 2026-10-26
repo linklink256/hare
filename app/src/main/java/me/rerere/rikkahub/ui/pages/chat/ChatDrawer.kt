@@ -358,6 +358,7 @@ fun ChatDrawerContent(
                 AgentTeamConversationList(
                     title = activeTeam.title,
                     members = activeTeam.members,
+                    selectedConversationId = current.id,
                     listState = conversationListState,
                     onBack = { drawerVm.closeTeam() },
                     onClick = { navigateToChatPage(navController, it) },

@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,11 +22,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,6 +38,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.service.TeamMemberView
+import me.rerere.rikkahub.ui.theme.extendColors
 import kotlin.uuid.Uuid
 
 /**
@@ -44,6 +50,8 @@ import kotlin.uuid.Uuid
 fun ColumnScope.AgentTeamConversationList(
     title: String,
     members: List<TeamMemberView>,
+    /** 当前打开的会话：用于和会话列表一致的高亮 */
+    selectedConversationId: Uuid?,
     listState: LazyListState,
     onBack: () -> Unit,
     onClick: (Uuid) -> Unit,
@@ -108,6 +116,7 @@ fun ColumnScope.AgentTeamConversationList(
         items(members, key = { it.member.id.toString() }) { view ->
             AgentTeamMemberItem(
                 view = view,
+                selected = view.member.conversationId == selectedConversationId,
                 onClick = { onClick(view.member.conversationId) },
                 modifier = Modifier.animateItem(),
             )
@@ -118,13 +127,19 @@ fun ColumnScope.AgentTeamConversationList(
 @Composable
 private fun AgentTeamMemberItem(
     view: TeamMemberView,
+    selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 与会话列表的 ConversationItem 保持同一套样式：胶囊高亮 + 一行标题 + 生成中的小圆点
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(50f))
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .background(
+                if (selected) MaterialTheme.colorScheme.surfaceColorAtElevation(8.dp)
+                else Color.Transparent
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -132,45 +147,22 @@ private fun AgentTeamMemberItem(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(
-                        if (view.running) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outline
-                    )
-                    .size(6.dp)
-            )
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 8.dp),
-            ) {
-                Text(
-                    text = view.member.name,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                val subtitle = view.member.role.ifBlank { view.lastMessage.orEmpty() }
-                if (subtitle.isNotBlank()) {
-                    Text(
-                        text = subtitle,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Spacer(Modifier.size(4.dp))
             Text(
-                text = stringResource(
-                    if (view.running) R.string.agent_team_running else R.string.agent_team_idle
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = view.member.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.weight(1f))
+
+            AnimatedVisibility(view.running) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.extendColors.green6)
+                        .size(4.dp)
+                        .semantics { contentDescription = "Running" }
+                )
+            }
         }
     }
 }
