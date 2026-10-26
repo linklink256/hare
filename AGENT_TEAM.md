@@ -71,9 +71,24 @@
 |---|---|---|
 | **P0** | 构建链打通：`apk add openjdk21` + 国内镜像 + Android SDK，**先编出未改动 APK 作基线** | ✅ 真出 APK |
 | **P1** | 领域模型 + DB + 任务图（改动 1–5） | ✅ 单测（JVM） |
-| **P2** | 9 个工具 + 工厂接线（改动 6–9） | ✅ 单测 + 编译 |
+| **P2** | 9 个工具 + 工厂接线（改动 6–9） | ✅ 单测 + 编译 + **真机启动** |
 | **P3** | 团队面板 UI + 跳转（改动 10–12） | ✅ 编译 + 装机 |
 | **P4** | 端到端：一句话拉起团队干活 | ⚠️ 需真实 API Key |
+
+## 5.5 实测记录（2026-10-26）
+- `:app:assembleDebug` 成功，504 个单测全绿；APK 56.7 M，装到平板（TB373FU / Android 16 / arm64-v8a）可正常启动。
+- **踩到的坑：Koin 依赖注册是「编译期查不出、只有真机跑才暴露」**。首次装机即崩：
+  ```
+  NoDefinitionFoundException: No definition found for type 'AgentTeamDAO'
+  ```
+  原因：注册了 `AgentTeamRepository(agentTeamDao = get())` 却没注册 DAO 本身。
+  **本项目的注册分层**（照这个来）：
+  | 类型 | 模块 |
+  |---|---|
+  | DAO | `di/DataSourceModule.kt` → `single { get<AppDatabase>().xxxDao() }` |
+  | Repository | `di/RepositoryModule.kt` |
+  | Service | `di/AppModule.kt` |
+  教训：**新增 Room 表后必须同时补 DAO 的 Koin 定义**，否则编译通过、启动即崩。
 
 ## 6. 已知风险
 1. **验证成本**：没有 JDK/Android SDK 时只能"盲写"Kotlin；P0 就是为消除这个风险。

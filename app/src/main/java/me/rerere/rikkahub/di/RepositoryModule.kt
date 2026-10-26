@@ -3,6 +3,7 @@ package me.rerere.rikkahub.di
 import android.content.Context
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.data.repository.FilesRepository
@@ -23,6 +24,10 @@ import org.koin.dsl.onClose
 import java.io.File
 
 val repositoryModule = module {
+    single {
+        AgentTeamRepository(get())
+    }
+
     single {
         ConversationRepository(get(), get(), get(), get(), get(), get())
     }

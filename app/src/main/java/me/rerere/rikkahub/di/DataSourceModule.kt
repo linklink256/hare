@@ -130,6 +130,10 @@ val dataSourceModule = module {
     }
 
     single {
+        get<AppDatabase>().agentTeamDao()
+    }
+
+    single {
         UsageRecorder(dao = get(), scope = get<AppScope>())
     }
 
