@@ -104,6 +104,49 @@ class AgentTeamRulesTest {
         assertFalse(AgentTeamRules.isDispatchable(t, listOf(t)))
     }
 
+    // ---------- 同时运行的名额 ----------
+
+    @Test
+    fun `occupied slots count only teammates that are running`() {
+        val team = Uuid.random()
+        val running = TeamMember(teamId = team, name = "a", conversationId = Uuid.random())
+        val idle = TeamMember(teamId = team, name = "b", conversationId = Uuid.random())
+
+        assertEquals(
+            1,
+            AgentTeamRules.occupiedSlots(listOf(running, idle)) { it == running.conversationId },
+        )
+    }
+
+    @Test
+    fun `failed teammates never occupy a slot`() {
+        val team = Uuid.random()
+        val failed = TeamMember(
+            teamId = team,
+            name = "bad",
+            conversationId = Uuid.random(),
+            status = TeamMemberStatus.FAILED,
+        )
+
+        // 即使它的会话看起来还在跑，失败成员也不占名额
+        assertEquals(0, AgentTeamRules.occupiedSlots(listOf(failed)) { true })
+    }
+
+    @Test
+    fun `finished teammates free their slot`() {
+        val team = Uuid.random()
+        val a = TeamMember(teamId = team, name = "a", conversationId = Uuid.random())
+        val b = TeamMember(teamId = team, name = "b", conversationId = Uuid.random())
+
+        assertEquals(0, AgentTeamRules.occupiedSlots(listOf(a, b)) { false })
+        assertEquals(1, AgentTeamRules.occupiedSlots(listOf(a, b)) { it == a.conversationId })
+    }
+
+    @Test
+    fun `empty roster occupies nothing`() {
+        assertEquals(0, AgentTeamRules.occupiedSlots(emptyList()) { true })
+    }
+
     // ---------- 状态机 ----------
 
     @Test

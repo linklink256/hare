@@ -28,7 +28,7 @@ data class AgentTeam(
     val updatedAt: Instant = Instant.now(),
 ) {
     companion object {
-        /** 团队一生最多创建几个队友（含失败的），对齐官方 bundle 的默认值 8 */
+        /** 同时运行的队友上限（不含创建失败与已结束的），对齐官方 bundle 的默认值 8 */
         const val DEFAULT_MAX_MEMBERS = 8
 
         /** 任务板上活跃任务上限 */
@@ -144,6 +144,19 @@ object AgentTeamRules {
         if (task.blockedBy.isEmpty()) return true
         val byId = allTasks.associateBy { it.id }
         return task.blockedBy.all { byId[it]?.status == TeamTaskStatus.DONE }
+    }
+
+    /**
+     * 当前占用的"同时运行"名额。
+     *
+     * 上限是**并发上限**而不是累计创建数：创建失败的（[TeamMemberStatus.FAILED]）
+     * 和已经跑完、当前空闲的队友都不占名额。
+     */
+    fun occupiedSlots(
+        members: List<TeamMember>,
+        isRunning: (Uuid) -> Boolean,
+    ): Int = members.count { member ->
+        member.status != TeamMemberStatus.FAILED && isRunning(member.conversationId)
     }
 
     /**

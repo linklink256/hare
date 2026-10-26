@@ -101,9 +101,18 @@ class AgentTeamService(
                 "teammate name '$normalized' is already taken; names are permanent and never reused"
             )
         }
-        val count = teamRepository.countMembers(teamId)
-        if (count >= team.maxMembers) {
-            throw AgentTeamException("team is full: $count/${team.maxMembers} teammates")
+        // 上限是"同时运行"的并发名额：失败的和已经跑完（空闲）的队友都不占名额，
+        // 且直接读设置里的实时值，改完立即生效（不必等新建团队）。
+        val limit = settingsStore.awaitLoaded().agentTeamMaxMembers
+        val jobs = chatService.getConversationJobs().first()
+        val occupied = AgentTeamRules.occupiedSlots(teamRepository.listMembers(teamId)) {
+            jobs[it]?.isActive == true
+        }
+        if (occupied >= limit) {
+            throw AgentTeamException(
+                "already $occupied/$limit teammates running; " +
+                    "wait for one to finish, or raise the limit in settings"
+            )
         }
 
         val settings = settingsStore.awaitLoaded()
