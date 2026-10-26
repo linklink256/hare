@@ -37,6 +37,13 @@ data class Settings(
     val displaySetting: DisplaySetting = DisplaySetting(),
     val networkSetting: NetworkSetting = NetworkSetting(),
     val favoriteModels: List<Uuid> = emptyList(),
+    // ---- Agent Team（子代理团队）----
+    /** 一个团队最多创建几个队友（含创建失败的），1..32 */
+    val agentTeamMaxMembers: Int = 8,
+    /** 团队共享任务板的任务上限，1..1024 */
+    val agentTeamMaxTasks: Int = 256,
+    /** wait_agent 的默认等待秒数，10..600 */
+    val agentTeamWaitTimeoutSeconds: Int = 120,
     val chatModelId: Uuid = Uuid.random(),
     val fastModelId: Uuid = Uuid.random(),
     val fastModelReasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,

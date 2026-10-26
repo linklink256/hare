@@ -109,6 +109,7 @@ val appModule = module {
             teamRepository = get(),
             conversationRepository = get(),
             chatService = get(),
+            settingsStore = get(),
         )
     }
 

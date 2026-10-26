@@ -172,6 +172,11 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
 
         // 赞助提醒
         plain(SPONSOR_ALERT_DISMISSED_AT, Settings::sponsorAlertDismissedAt) { copy(sponsorAlertDismissedAt = it) },
+
+        // Agent Team（子代理团队）
+        plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
+        plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },
+        plain(AGENT_TEAM_WAIT_TIMEOUT, Settings::agentTeamWaitTimeoutSeconds) { copy(agentTeamWaitTimeoutSeconds = it) },
     )
 }
 

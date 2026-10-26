@@ -72,6 +72,7 @@ class ChatToolFactory(
                         teamService = agentTeamService.value,
                         teamRepository = agentTeamRepository,
                         leadConversationId = conversationId,
+                        defaultWaitSeconds = settings.agentTeamWaitTimeoutSeconds,
                     )
                 )
             }

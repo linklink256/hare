@@ -5,6 +5,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
+import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.AgentTeamRules
 import me.rerere.rikkahub.data.model.Conversation
@@ -55,14 +56,19 @@ class AgentTeamService(
     private val teamRepository: AgentTeamRepository,
     private val conversationRepository: ConversationRepository,
     private val chatService: ChatService,
+    private val settingsStore: SettingsStore,
 ) {
     /** Lead 会话第一次用到团队工具时按需建队 */
     suspend fun getOrCreateTeam(leadConversationId: Uuid): AgentTeam {
         teamRepository.getTeamByLeadConversation(leadConversationId)?.let { return it }
         val lead = chatService.getConversation(leadConversationId)
+        // 上限取自设置里的「子代理团队」页；改动只影响之后新建的团队
+        val settings = settingsStore.awaitLoaded()
         val team = AgentTeam(
             leadConversationId = leadConversationId,
             title = lead?.title?.takeIf { it.isNotBlank() } ?: "Agent Team",
+            maxMembers = settings.agentTeamMaxMembers,
+            maxTasks = settings.agentTeamMaxTasks,
         )
         teamRepository.upsertTeam(team)
         return team

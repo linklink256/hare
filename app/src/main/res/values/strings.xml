@@ -1797,4 +1797,15 @@
     <string name="agent_team_blocked">blocked</string>
     <string name="agent_team_open_team">Open team</string>
     <string name="agent_team_back_to_chats">Back to chats</string>
+    <string name="setting_agent_team">Sub-agents (Agent Team)</string>
+    <string name="setting_agent_team_desc">Limits and waiting for teammates a lead can create</string>
+    <string name="setting_agent_team_max_members">Max teammates</string>
+    <string name="setting_agent_team_max_members_desc">How many teammates one team may create, including failed ones (1–32)</string>
+    <string name="setting_agent_team_max_tasks">Task board limit</string>
+    <string name="setting_agent_team_max_tasks_desc">Max tasks on the shared board (1–1024)</string>
+    <string name="setting_agent_team_wait_timeout">Wait timeout (seconds)</string>
+    <string name="setting_agent_team_wait_timeout_desc">Default timeout for waiting on a teammate (10–600)</string>
+    <string name="setting_agent_team_reset">Restore defaults</string>
+    <string name="setting_agent_team_reset_desc">Set teammates to 8, task board to 256, wait timeout to 120s</string>
+    <string name="setting_agent_team_applies_next_team">Takes effect for teams created after the change.</string>
 </resources>

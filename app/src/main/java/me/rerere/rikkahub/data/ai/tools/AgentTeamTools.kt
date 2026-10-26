@@ -62,6 +62,8 @@ fun createAgentTeamTools(
     teamService: AgentTeamService,
     teamRepository: AgentTeamRepository,
     leadConversationId: Uuid,
+    /** 设置里「子代理团队」页配置的默认等待秒数 */
+    defaultWaitSeconds: Int = DEFAULT_WAIT_SECONDS,
 ): List<Tool> {
     suspend fun teamId(): Uuid = teamService.getOrCreateTeam(leadConversationId).id
 
@@ -205,14 +207,14 @@ fun createAgentTeamTools(
                     properties = buildJsonObject {
                         put("timeout_seconds", buildJsonObject {
                             put("type", "integer")
-                            put("description", "How long to wait (default $DEFAULT_WAIT_SECONDS, max $MAX_WAIT_SECONDS)")
+                            put("description", "How long to wait in seconds (max $MAX_WAIT_SECONDS); omit to use the configured default")
                         })
                     }
                 )
             },
             execute = { args ->
                 val team = teamId()
-                val seconds = (args.obj().int("timeout_seconds") ?: DEFAULT_WAIT_SECONDS)
+                val seconds = (args.obj().int("timeout_seconds") ?: defaultWaitSeconds)
                     .coerceIn(1, MAX_WAIT_SECONDS)
                 when (val outcome = teamService.waitForChange(team, seconds * 1000L)) {
                     is TeamWaitOutcome.MemberFinished -> toolJson {

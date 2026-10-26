@@ -1799,4 +1799,15 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="agent_team_blocked">被阻塞</string>
     <string name="agent_team_open_team">进入团队</string>
     <string name="agent_team_back_to_chats">返回会话列表</string>
+    <string name="setting_agent_team">子代理团队</string>
+    <string name="setting_agent_team_desc">领队可创建的队友数量、任务板与等待参数</string>
+    <string name="setting_agent_team_max_members">队友数量上限</string>
+    <string name="setting_agent_team_max_members_desc">一个团队最多能创建几个队友（含创建失败的），1–32</string>
+    <string name="setting_agent_team_max_tasks">任务板任务上限</string>
+    <string name="setting_agent_team_max_tasks_desc">共享任务板上最多几个任务，1–1024</string>
+    <string name="setting_agent_team_wait_timeout">等待队友超时（秒）</string>
+    <string name="setting_agent_team_wait_timeout_desc">wait_agent 的默认等待秒数，10–600</string>
+    <string name="setting_agent_team_reset">恢复默认</string>
+    <string name="setting_agent_team_reset_desc">队友 8 个、任务板 256 条、等待 120 秒</string>
+    <string name="setting_agent_team_applies_next_team">改动对之后新建的团队生效。</string>
 </resources>

@@ -180,6 +180,11 @@ class SettingsStore internal constructor(
         // 统计
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
 
+        // Agent Team（子代理团队）
+        val AGENT_TEAM_MAX_MEMBERS = intPreferencesKey("agent_team_max_members")
+        val AGENT_TEAM_MAX_TASKS = intPreferencesKey("agent_team_max_tasks")
+        val AGENT_TEAM_WAIT_TIMEOUT = intPreferencesKey("agent_team_wait_timeout")
+
         // 赞助提醒
         val SPONSOR_ALERT_DISMISSED_AT = intPreferencesKey("sponsor_alert_dismissed_at")
 
