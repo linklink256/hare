@@ -12,11 +12,13 @@ import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
 import me.rerere.rikkahub.data.skills.SkillManager
+import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.workspace.WorkspaceShellStatus
 import java.io.File
 import kotlin.uuid.Uuid
@@ -44,11 +46,15 @@ class ChatToolFactory(
     private val mcpManager: McpManager,
     private val skillManager: SkillManager,
     private val workspaceRepository: WorkspaceRepository,
+    private val agentTeamRepository: AgentTeamRepository,
+    /** 懒解析：AgentTeamService 依赖 ChatService，而本类又在 ChatService 的依赖链上 */
+    private val agentTeamService: Lazy<AgentTeamService>,
 ) {
     suspend fun createTools(
         settings: Settings,
         assistant: Assistant,
         model: Model,
+        conversationId: Uuid,
         workspaceCwd: String? = null,
     ): List<Tool> {
         val workspaceTools = createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), workspaceCwd)
@@ -60,6 +66,15 @@ class ChatToolFactory(
                 addAll(createSearchTools(settings))
             }
             addAll(localTools.getTools(assistant.localTools))
+            if (assistant.enableAgentTeam) {
+                addAll(
+                    createAgentTeamTools(
+                        teamService = agentTeamService.value,
+                        teamRepository = agentTeamRepository,
+                        leadConversationId = conversationId,
+                    )
+                )
+            }
             if (assistant.enableRecentChatsReference) {
                 addAll(createConversationTools(conversationRepository, assistant.id))
             }

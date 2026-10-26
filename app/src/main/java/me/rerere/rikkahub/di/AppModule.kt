@@ -6,6 +6,8 @@ import me.rerere.rikkahub.data.ai.ChatRequestFactory
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
+import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.rikkahub.service.ChatFloatingTracker
 import me.rerere.rikkahub.service.ChatNotificationManager
 import me.rerere.rikkahub.service.ChatService
@@ -98,6 +100,22 @@ val appModule = module {
             mcpManager = get(),
             skillManager = get(),
             workspaceRepository = get(),
+            agentTeamRepository = get(),
+            agentTeamService = lazy { get() },
+        )
+    }
+
+    single {
+        AgentTeamRepository(
+            agentTeamDAO = get(),
+        )
+    }
+
+    single {
+        AgentTeamService(
+            teamRepository = get(),
+            conversationRepository = get(),
+            chatService = get(),
         )
     }
 
