@@ -15,8 +15,20 @@ git fetch upstream && git rebase upstream/master    # 跟进上游
 | 差异 | 原因 |
 |---|---|
 | `AGENT_TEAM.md` / `FORK.md` | fork 说明与设计文档 |
-| （待做）移除 Firebase Crashlytics / Analytics | 原版构建需要 `app/google-services.json`；fork 不接 Firebase，去掉后才能独立构建 |
-| （待做）`gradle/libs.versions.toml` 增加国内镜像 | 本机网络下 `dl.google.com` / `maven.google.com` 不可达 |
+| 移除 Firebase Crashlytics / Analytics | 原版构建需要 `app/google-services.json`；fork 不接 Firebase，去掉后才能独立构建（已提交 `a92bdc66`） |
+
+## 构建（本机环境）
+容器是 **aarch64**，Android SDK 宿主工具是 x86-64 → 用 qemu + glibc sysroot 跑。
+完整配方、坑与实测数据见工作区 `notes/rikkahub-build-notes.md`。命令：
+```sh
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+./gradlew :app:assembleDebug \
+  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2 \
+  -Dorg.gradle.jvmargs="-Xmx2560m -XX:MaxMetaspaceSize=768m" \
+  -Dkotlin.daemon.jvmargs="-Xmx1536m" --no-parallel
+```
+已实测：**BUILD SUCCESSFUL**，产出 6 个 APK（各 56 M），
+`app/build/outputs/apk/{github,play}/debug/`。
 
 ## 许可
 上游为 **AGPL-3.0**。本 fork 沿用同一许可；若通过网络对外提供服务，须公开源码。
