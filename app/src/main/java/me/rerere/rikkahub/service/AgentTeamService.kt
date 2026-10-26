@@ -9,6 +9,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.AgentTeamRules
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.pinChatModel
 import me.rerere.rikkahub.data.model.TeamMember
 import me.rerere.rikkahub.data.model.TeamMemberStatus
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
@@ -105,6 +106,7 @@ class AgentTeamService(
             throw AgentTeamException("team is full: $count/${team.maxMembers} teammates")
         }
 
+        val settings = settingsStore.awaitLoaded()
         val lead = chatService.getConversation(team.leadConversationId)
         val resolvedAssistant = assistantId ?: lead?.assistantId ?: DEFAULT_ASSISTANT_ID
 
@@ -123,7 +125,9 @@ class AgentTeamService(
             status = TeamMemberStatus.ACTIVE,
         )
 
-        conversationRepository.insertConversation(conversation)
+        // 设置里选了「队友默认模型」就把它钉在队友会话上（其余配置沿用领队助手）
+        val pinned = conversation.pinChatModel(settings, settings.agentTeamModelId)
+        conversationRepository.insertConversation(pinned)
         teamRepository.upsertMember(member)
         teamRepository.upsertTeam(team)
 

@@ -20,8 +20,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.BubbleChat
 import me.rerere.hugeicons.stroke.Refresh01
 import me.rerere.rikkahub.R
+import me.rerere.ai.provider.ModelType
+import me.rerere.rikkahub.ui.components.ai.ModelField
+import me.rerere.rikkahub.ui.components.ai.ModelListSheet
+import me.rerere.rikkahub.ui.components.ai.rememberModelListState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.CardGroupIcon
@@ -39,6 +44,12 @@ fun SettingAgentTeamPage() {
     val vm: SettingVM = koinViewModel()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    // CardGroup 里放不了弹窗，选择状态在这里建好，弹窗统一放在列表后面
+    val teamModel = rememberModelListState(
+        modelId = settings.agentTeamModelId,
+        providers = settings.providers,
+        type = ModelType.CHAT,
+    )
 
     Scaffold(
         topBar = {
@@ -61,6 +72,27 @@ fun SettingAgentTeamPage() {
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            CardGroup {
+                formItem(
+                    headlineContent = { Text(stringResource(R.string.setting_agent_team_model)) },
+                    supportingContent = { Text(stringResource(R.string.setting_agent_team_model_desc)) },
+                    leadingContent = {
+                        CardGroupIcon(
+                            HugeIcons.BubbleChat,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    },
+                ) {
+                    ModelField(
+                        model = teamModel.currentModel,
+                        onClick = { teamModel.open() },
+                        placeholder = stringResource(R.string.setting_agent_team_model_follow),
+                        onClear = { vm.updateSettings { it.copy(agentTeamModelId = null) } },
+                    )
+                }
+            }
+
             CardGroup {
                 formItem(
                     headlineContent = { Text(stringResource(R.string.setting_agent_team_max_members)) },
@@ -132,5 +164,9 @@ fun SettingAgentTeamPage() {
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
+    }
+
+    ModelListSheet(state = teamModel) { model ->
+        vm.updateSettings { it.copy(agentTeamModelId = model.id) }
     }
 }

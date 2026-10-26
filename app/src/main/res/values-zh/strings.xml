@@ -1810,4 +1810,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="setting_agent_team_reset">恢复默认</string>
     <string name="setting_agent_team_reset_desc">队友 8 个、任务板 256 条、等待 120 秒</string>
     <string name="setting_agent_team_applies_next_team">改动对之后新建的团队生效。</string>
+    <string name="setting_agent_team_model">队友默认模型</string>
+    <string name="setting_agent_team_model_desc">队友使用该模型；联网/MCP/技能等仍沿用领队助手</string>
+    <string name="setting_agent_team_model_follow">跟随领队助手</string>
 </resources>

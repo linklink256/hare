@@ -181,6 +181,7 @@ class SettingsStore internal constructor(
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
 
         // Agent Team（子代理团队）
+        val AGENT_TEAM_MODEL = stringPreferencesKey("agent_team_model")
         val AGENT_TEAM_MAX_MEMBERS = intPreferencesKey("agent_team_max_members")
         val AGENT_TEAM_MAX_TASKS = intPreferencesKey("agent_team_max_tasks")
         val AGENT_TEAM_WAIT_TIMEOUT = intPreferencesKey("agent_team_wait_timeout")

@@ -165,6 +165,10 @@ private val SAMPLE = Settings(
     webServerLocalhostOnly = true,
     backupReminderConfig = BackupReminderConfig(enabled = true),
     sponsorAlertDismissedAt = 7,
+    agentTeamModelId = id(31),
+    agentTeamMaxMembers = 12,
+    agentTeamMaxTasks = 300,
+    agentTeamWaitTimeoutSeconds = 90,
 )
 
 private val STORED_KEYS = setOf(
@@ -218,4 +222,8 @@ private val STORED_KEYS = setOf(
     "quick_messages",
     "backup_reminder_config",
     "sponsor_alert_dismissed_at",
+    "agent_team_model",
+    "agent_team_max_members",
+    "agent_team_max_tasks",
+    "agent_team_wait_timeout",
 )

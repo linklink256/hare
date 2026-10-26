@@ -1808,4 +1808,7 @@
     <string name="setting_agent_team_reset">Restore defaults</string>
     <string name="setting_agent_team_reset_desc">Set teammates to 8, task board to 256, wait timeout to 120s</string>
     <string name="setting_agent_team_applies_next_team">Takes effect for teams created after the change.</string>
+    <string name="setting_agent_team_model">Default model for teammates</string>
+    <string name="setting_agent_team_model_desc">Teammates use this model; other settings still follow the lead\'s assistant</string>
+    <string name="setting_agent_team_model_follow">Follow the lead\'s assistant</string>
 </resources>

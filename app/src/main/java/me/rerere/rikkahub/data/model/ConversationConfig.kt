@@ -120,6 +120,24 @@ fun Settings.getChatModelOf(conversation: Conversation): Model? {
 }
 
 /**
+ * 把助手当前的配置固定到会话上，但把聊天模型换成 [chatModelId]。
+ *
+ * 用于子代理：队友沿用领队助手的其余配置（联网搜索 / MCP / 技能 / 思考级别），只换模型。
+ * [chatModelId] 为 null 时原样返回，保持「跟随助手」的行为。
+ */
+fun Conversation.pinChatModel(settings: Settings, chatModelId: Uuid?): Conversation {
+    if (chatModelId == null) return this
+    val assistant = settings.getStoredAssistantOf(this)
+    return copy(
+        config = assistant.toConversationConfig().copy(
+            chatModelId = chatModelId,
+            // 内置搜索是模型自身的能力，换模型后跟随新模型的开关
+            builtInSearch = settings.findModelById(chatModelId)?.tools?.contains(BuiltInTools.Search) == true,
+        )
+    )
+}
+
+/**
  * 把助手当前的配置固定到会话上。已经固定过的会话原样返回，
  * 只有固定的模型被删除时才改为固定助手当前的模型，之后不再跟着助手变。
  */

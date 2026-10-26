@@ -174,6 +174,14 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         plain(SPONSOR_ALERT_DISMISSED_AT, Settings::sponsorAlertDismissedAt) { copy(sponsorAlertDismissedAt = it) },
 
         // Agent Team（子代理团队）
+        SettingsField(
+            AGENT_TEAM_MODEL,
+            Settings::agentTeamModelId,
+            { copy(agentTeamModelId = it) },
+            // 没设置时不存这个 key
+            encode = { it?.toString() },
+            decode = { Uuid.parse(it) },
+        ),
         plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
         plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },
         plain(AGENT_TEAM_WAIT_TIMEOUT, Settings::agentTeamWaitTimeoutSeconds) { copy(agentTeamWaitTimeoutSeconds = it) },

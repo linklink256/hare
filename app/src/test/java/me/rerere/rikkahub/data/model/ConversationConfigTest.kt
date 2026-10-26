@@ -220,4 +220,43 @@ class ConversationConfigTest {
         assertEquals(setOf(conversationInjection), bound.modeInjectionIds)
         assertEquals(setOf(lorebook), bound.lorebookIds)
     }
+
+    // ---- 子代理：把队友钉到设置里选的默认模型 ----
+
+    @Test
+    fun `pinChatModel pins the chosen model and keeps the assistant settings`() {
+        val pinned = conversation().pinChatModel(settings(), modelB.id)
+
+        assertEquals(modelB.id, pinned.config?.chatModelId)
+        // 助手的其余配置照旧（思考级别 / 联网 / MCP / 工作区 / 技能）
+        assertEquals(assistant.reasoningLevel, pinned.config?.reasoningLevel)
+        assertEquals(assistant.enableWebSearch, pinned.config?.enableWebSearch)
+        assertEquals(assistant.mcpServers, pinned.config?.mcpServers)
+        assertEquals(assistant.workspaceId, pinned.config?.workspaceId)
+        assertEquals(assistant.enabledSkills, pinned.config?.enabledSkills)
+        // modelB 没有内置搜索
+        assertFalse(pinned.config?.builtInSearch == true)
+        // 会话视角下取到的就是被钉的那个模型
+        assertEquals(modelB, settings().getChatModelOf(pinned))
+    }
+
+    @Test
+    fun `pinChatModel follows the pinned model built-in search capability`() {
+        val pinned = conversation().pinChatModel(settings(), modelA.id)
+
+        assertEquals(modelA.id, pinned.config?.chatModelId)
+        // modelA 自带内置搜索
+        assertTrue(pinned.config?.builtInSearch == true)
+        assertEquals(modelA, settings().getChatModelOf(pinned))
+    }
+
+    @Test
+    fun `pinChatModel with null keeps the conversation untouched`() {
+        val conversation = conversation()
+
+        assertSame(conversation, conversation.pinChatModel(settings(), null))
+        assertNull(conversation.config)
+        // 仍然跟随助手
+        assertEquals(modelA, settings().getChatModelOf(conversation))
+    }
 }
