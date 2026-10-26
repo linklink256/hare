@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.filter
 import androidx.paging.insertSeparators
 import androidx.paging.map
 import kotlinx.coroutines.flow.Flow
@@ -29,23 +30,44 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Folder
+import me.rerere.rikkahub.data.repository.AgentTeamConversationIndex
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.memoryId
+import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.TeamMemberView
 import me.rerere.rikkahub.utils.toLocalString
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.uuid.Uuid
 
+/** 抽屉里的团队视图：Lead 会话 + 它的队友（点箭头进入） */
+data class DrawerTeamView(
+    val leadConversationId: Uuid,
+    val title: String,
+    val members: List<TeamMemberView>,
+)
+
+/** 一次会话列表查询的输入 */
+private data class ConversationListQuery(
+    val assistantId: Uuid,
+    val folderId: Uuid?,
+    val sortOrder: ConversationSortOrder,
+    val hiddenConversationIds: Set<Uuid>,
+)
+
 class ChatDrawerVM(
     private val context: Application,
     private val settingsStore: SettingsStore,
-    conversationRepo: ConversationRepository,
+    private val conversationRepo: ConversationRepository,
     private val folderRepo: FolderRepository,
     private val chatService: ChatService,
     private val memoryConsolidationScheduler: MemoryConsolidationScheduler,
     private val savedStateHandle: SavedStateHandle,
+    private val agentTeamRepository: AgentTeamRepository,
+    private val agentTeamService: AgentTeamService,
 ) : ViewModel() {
 
     private val assistantIdFlow = settingsStore.settingsFlow
@@ -74,11 +96,20 @@ class ChatDrawerVM(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    /** Lead / 队友会话索引：主列表据此隐藏队友会话，并给 Lead 行加团队入口 */
+    val teamIndex: StateFlow<AgentTeamConversationIndex> =
+        agentTeamRepository.observeConversationIndex()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AgentTeamConversationIndex.EMPTY)
+
+    // 点箭头进入的团队视图；null 表示普通会话列表
+    private val _teamView = MutableStateFlow<DrawerTeamView?>(null)
+    val teamView: StateFlow<DrawerTeamView?> = _teamView.asStateFlow()
+
     val conversations: Flow<PagingData<ConversationListItem>> =
-        combine(assistantIdFlow, _selectedFolderId, sortOrderFlow) { assistantId, folderId, sortOrder ->
-            Triple(assistantId, folderId, sortOrder)
+        combine(assistantIdFlow, _selectedFolderId, sortOrderFlow, teamIndex) { assistantId, folderId, sortOrder, index ->
+            ConversationListQuery(assistantId, folderId, sortOrder, index.memberConversationIds)
         }
-            .flatMapLatest { (assistantId, folderId, sortOrder) ->
+            .flatMapLatest { (assistantId, folderId, sortOrder, hiddenConversationIds) ->
                 val paging = if (folderId == null) {
                     conversationRepo.getUnfiledConversationsOfAssistantPaging(assistantId, sortOrder)
                 } else {
@@ -86,6 +117,8 @@ class ChatDrawerVM(
                 }
                 paging.map { pagingData ->
                     pagingData
+                        // 队友会话不混进主对话列表，只从 Lead 的团队视图进入
+                        .filter { conversation -> conversation.id !in hiddenConversationIds }
                         .map { ConversationListItem.Item(it) }
                         .insertSeparators<ConversationListItem.Item, ConversationListItem> { before, after ->
                             when {
@@ -125,6 +158,14 @@ class ChatDrawerVM(
         viewModelScope.launch {
             assistantIdFlow.collect {
                 _selectedFolderId.value = null
+                _teamView.value = null
+            }
+        }
+
+        // 队友跑完一轮就刷新团队视图里的状态与最近消息
+        viewModelScope.launch {
+            chatService.generationDoneFlow.collect {
+                _teamView.value?.let { loadTeamView(it.leadConversationId) }
             }
         }
     }
@@ -136,6 +177,32 @@ class ChatDrawerVM(
 
     fun selectFolder(folderId: Uuid?) {
         _selectedFolderId.value = folderId
+        _teamView.value = null
+    }
+
+    /** 点 Lead 会话行右侧的箭头：进入该团队的会话列表 */
+    fun openTeam(leadConversationId: Uuid) {
+        viewModelScope.launch {
+            loadTeamView(leadConversationId)
+        }
+    }
+
+    fun closeTeam() {
+        _teamView.value = null
+    }
+
+    private suspend fun loadTeamView(leadConversationId: Uuid) {
+        val team = agentTeamRepository.getTeamByLeadConversation(leadConversationId)
+        if (team == null) {
+            _teamView.value = null
+            return
+        }
+        val lead = conversationRepo.getConversationById(leadConversationId)
+        _teamView.value = DrawerTeamView(
+            leadConversationId = leadConversationId,
+            title = lead?.title?.takeIf { it.isNotBlank() } ?: context.getString(R.string.agent_team_title),
+            members = agentTeamService.listAgents(team.id),
+        )
     }
 
     fun createFolder(name: String) {

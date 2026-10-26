@@ -1795,4 +1795,6 @@
     <string name="agent_team_idle">idle</string>
     <string name="agent_team_open">Open chat</string>
     <string name="agent_team_blocked">blocked</string>
+    <string name="agent_team_open_team">Open team</string>
+    <string name="agent_team_back_to_chats">Back to chats</string>
 </resources>

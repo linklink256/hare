@@ -28,6 +28,14 @@ interface AgentTeamDAO {
     @Query("DELETE FROM agent_teams WHERE id = :id")
     suspend fun deleteTeam(id: String)
 
+    /** 所有 Lead 会话 id：抽屉据此决定哪些会话行显示「进入团队」箭头 */
+    @Query("SELECT lead_conversation_id FROM agent_teams")
+    fun observeLeadConversationIds(): Flow<List<String>>
+
+    /** 所有队友会话 id：抽屉据此把这些会话从主列表里隐藏 */
+    @Query("SELECT conversation_id FROM agent_team_members")
+    fun observeMemberConversationIds(): Flow<List<String>>
+
     // ---------- 名册 ----------
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

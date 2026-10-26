@@ -1797,4 +1797,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="agent_team_idle">空闲</string>
     <string name="agent_team_open">打开会话</string>
     <string name="agent_team_blocked">被阻塞</string>
+    <string name="agent_team_open_team">进入团队</string>
+    <string name="agent_team_back_to_chats">返回会话列表</string>
 </resources>

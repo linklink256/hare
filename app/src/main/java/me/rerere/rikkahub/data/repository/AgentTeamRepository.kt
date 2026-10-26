@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.repository
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import me.rerere.rikkahub.data.db.dao.AgentTeamDAO
 import me.rerere.rikkahub.data.db.entity.AgentTeamEntity
@@ -16,6 +17,19 @@ import me.rerere.rikkahub.data.model.TeamTaskUpdateResult
 import me.rerere.rikkahub.utils.JsonInstant
 import java.time.Instant
 import kotlin.uuid.Uuid
+
+/** 团队会话索引，供会话列表区分「Lead 会话」与「队友会话」 */
+data class AgentTeamConversationIndex(
+    val leadConversationIds: Set<Uuid> = emptySet(),
+    val memberConversationIds: Set<Uuid> = emptySet(),
+) {
+    companion object {
+        val EMPTY = AgentTeamConversationIndex()
+    }
+}
+
+private fun List<String>.toUuidSet(): Set<Uuid> =
+    mapNotNull { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }.toSet()
 
 /**
  * 团队状态（团队 / 名册 / 任务板）的持久化。
@@ -45,6 +59,21 @@ class AgentTeamRepository(
         agentTeamDAO.deleteTasksOfTeam(id.toString())
         agentTeamDAO.deleteTeam(id.toString())
     }
+
+    /**
+     * 团队与普通会话的对应关系：Lead 会话（要显示团队入口）与队友会话（要从主列表隐藏）。
+     * 抽屉列表用它把子代理会话收进团队视图，而不是混在主对话列表里。
+     */
+    fun observeConversationIndex(): Flow<AgentTeamConversationIndex> =
+        combine(
+            agentTeamDAO.observeLeadConversationIds(),
+            agentTeamDAO.observeMemberConversationIds(),
+        ) { leads, members ->
+            AgentTeamConversationIndex(
+                leadConversationIds = leads.toUuidSet(),
+                memberConversationIds = members.toUuidSet(),
+            )
+        }
 
     // ---------- 名册 ----------
 

@@ -121,6 +121,8 @@ fun ChatDrawerContent(
     val folders by drawerVm.folders.collectAsStateWithLifecycle()
     val selectedFolderId by drawerVm.selectedFolderId.collectAsStateWithLifecycle()
     val memoryDreaming by drawerVm.memoryDreaming.collectAsStateWithLifecycle()
+    val teamView by drawerVm.teamView.collectAsStateWithLifecycle()
+    val teamIndex by drawerVm.teamIndex.collectAsStateWithLifecycle()
     val conversationListState = rememberLazyListState(
         initialFirstVisibleItemIndex = drawerVm.scrollIndex,
         initialFirstVisibleItemScrollOffset = drawerVm.scrollOffset,
@@ -262,6 +264,8 @@ fun ChatDrawerContent(
 
             DrawerActions(navController = navController)
 
+            // 进入团队视图时不显示文件夹/排序栏（那是会话列表的控件）
+            if (teamView == null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -294,6 +298,7 @@ fun ChatDrawerContent(
                     },
                 )
             }
+            }
         }
     }
 
@@ -308,6 +313,8 @@ fun ChatDrawerContent(
                 drawerHeader()
             }
 
+            val activeTeam = teamView
+            if (activeTeam == null) {
             ConversationList(
                 current = current,
                 conversations = conversations,
@@ -342,8 +349,23 @@ fun ChatDrawerContent(
                 onMoveToFolder = {
                     conversationToMoveFolder = it
                     showMoveToFolderSheet = true
-                }
+                },
+                teamLeadIds = teamIndex.leadConversationIds,
+                onOpenTeam = { drawerVm.openTeam(it.id) }
             )
+            } else {
+                // 团队视图：只列出该 Lead 的队友会话
+                AgentTeamConversationList(
+                    title = activeTeam.title,
+                    members = activeTeam.members,
+                    listState = conversationListState,
+                    onBack = { drawerVm.closeTeam() },
+                    onClick = { navigateToChatPage(navController, it) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+            }
 
             if (memoryDreaming) {
                 MemoryDreamingEntry(
