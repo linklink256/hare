@@ -21,12 +21,13 @@ git fetch upstream && git rebase upstream/master    # 跟进上游
 容器是 **aarch64**，Android SDK 宿主工具是 x86-64 → 用 qemu + glibc sysroot 跑。
 完整配方、坑与实测数据见工作区 `notes/rikkahub-build-notes.md`。命令：
 ```sh
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-./gradlew :app:assembleDebug \
-  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2 \
-  -Dorg.gradle.jvmargs="-Xmx2560m -XX:MaxMetaspaceSize=768m" \
-  -Dkotlin.daemon.jvmargs="-Xmx1536m" --no-parallel
+/root/bin/gradle-low-memory :app:assembleGithubDebug
 ```
+
+**不要**再手写 `./gradlew -Dorg.gradle.jvmargs=... -Dkotlin.daemon.jvmargs=...`：那套双守护进程配方
+（2.5 G + 1.5 G）会把平板可用内存压到 ~1 G 并大量用 swap，本入口会直接拒绝这类覆盖。
+入口固定 1.75 GiB 共享堆 / Kotlin in-process / 单 worker / 用完即退，实测峰值约 0.8–2.5 GiB。
+详见 `notes/gradle-low-memory.md`。
 已实测：**BUILD SUCCESSFUL**，产出 6 个 APK（各 56 M），
 `app/build/outputs/apk/{github,play}/debug/`。
 
