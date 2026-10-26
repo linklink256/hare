@@ -72,7 +72,7 @@
 | **P0** | 构建链打通：`apk add openjdk21` + 国内镜像 + Android SDK，**先编出未改动 APK 作基线** | ✅ 真出 APK |
 | **P1** | 领域模型 + DB + 任务图（改动 1–5） | ✅ 单测（JVM） |
 | **P2** | 9 个工具 + 工厂接线（改动 6–9） | ✅ 单测 + 编译 + **真机启动** |
-| **P3** | 团队面板 UI + 跳转（改动 10–12） | ✅ 编译 + 装机 |
+| **P3** | 团队面板 UI + 跳转（改动 10–12） | ✅ 编译 + **装机实测** |
 | **P4** | 端到端：一句话拉起团队干活 | ⚠️ 需真实 API Key |
 
 ## 5.5 实测记录（2026-10-26）
@@ -89,6 +89,28 @@
   | Repository | `di/RepositoryModule.kt` |
   | Service | `di/AppModule.kt` |
   教训：**新增 Room 表后必须同时补 DAO 的 Koin 定义**，否则编译通过、启动即崩。
+
+## 5.6 P3 UI 实测记录（2026-10-26）
+装机后逐屏验证（截图见工作区 `shots/p3_*.jpg`）：
+1. 助手 → 本地工具页顶部出现「**作为领队组建团队**」开关（中英文案均已加，`values/` + `values-zh/`）；
+2. 打开开关 → 回到聊天页，顶栏**多出第三个图标**（团队）；
+3. 点该图标 → 弹出「智能体团队」面板，空状态显示「还没有队友。让助手组建一支队伍。」
+
+这条链路同时验证了：`switchItem` → `assistant.copy(enableAgentTeam = true)` → DataStore 持久化 → `ChatPage` 顶栏按 `assistant.enableAgentTeam` 显示入口 → 面板拉取 `getTeamByLeadConversation`。
+
+**仍未验证**：模型真的去调这 9 个工具（需要在 debug 版里配一个 provider/API Key 才能跑一轮生成）。
+
+### UI 落地位置
+| 改动 | 文件 |
+|---|---|
+| 开关 | `ui/pages/assistant/detail/AssistantLocalToolPage.kt` |
+| 顶栏入口 + 面板挂载 | `ui/pages/chat/ChatPage.kt`（`TopBar` 加 `onOpenAgentTeam` 参数；面板挂在 `ChatPageContent` 末尾） |
+| 面板本体 | `ui/pages/chat/AgentTeamPanel.kt`（`AgentTeamSheet` + `AgentTeamPanelState`） |
+| 状态与刷新 | `ui/pages/chat/ChatVM.kt`（`agentTeamPanel` + `refreshAgentTeam()`，订阅 `generationDoneFlow` 自动刷新） |
+| 字符串 | `res/values/strings.xml`、`res/values-zh/strings.xml` |
+
+> 踩坑：面板一开始挂到了 `ChatFilesPickerSheet` 末尾（`ChatPage.kt` 里 `ChatPageContent` 与 `TopBar` 之间还有这个函数），
+> 报 `Unresolved reference 'navController'`。**Compose 里插代码要用带函数签名的锚点，别用 `} else null, ) } }` 这种通用结尾。**
 
 ## 6. 已知风险
 1. **验证成本**：没有 JDK/Android SDK 时只能"盲写"Kotlin；P0 就是为消除这个风险。

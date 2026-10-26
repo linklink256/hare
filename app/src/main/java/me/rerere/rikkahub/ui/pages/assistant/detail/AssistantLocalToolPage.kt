@@ -33,6 +33,7 @@ import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.JavaScript
 import me.rerere.hugeicons.stroke.MessageQuestion
 import me.rerere.hugeicons.stroke.SmartPhone01
+import me.rerere.hugeicons.stroke.UserGroup
 import me.rerere.hugeicons.stroke.VolumeHigh
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.tools.local.LocalToolOption
@@ -173,6 +174,30 @@ private fun AssistantLocalToolContent(
             .imePadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        CardGroup {
+            switchItem(
+                checked = assistant.enableAgentTeam,
+                onCheckedChange = { onUpdate(assistant.copy(enableAgentTeam = it)) },
+                leadingContent = {
+                    CardGroupIcon(
+                        icon = HugeIcons.UserGroup,
+                        containerColor = if (assistant.enableAgentTeam) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        contentColor = if (assistant.enableAgentTeam) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                },
+                supportingContent = { Text(stringResource(R.string.agent_team_setting_desc)) },
+                headlineContent = { Text(stringResource(R.string.agent_team_setting)) },
+            )
+        }
+
         CardGroup {
             toolItem(
                 option = LocalToolOption.JavascriptEngine,

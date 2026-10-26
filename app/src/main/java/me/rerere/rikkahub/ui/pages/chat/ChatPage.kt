@@ -61,6 +61,7 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
+import me.rerere.hugeicons.stroke.UserGroup
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -291,6 +292,8 @@ private fun ChatPageContent(
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
     var showFilesSheet by remember { mutableStateOf(false) }
+    var showAgentTeam by remember { mutableStateOf(false) }
+    val agentTeamPanel by vm.agentTeamPanel.collectAsStateWithLifecycle()
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
@@ -336,6 +339,10 @@ private fun ChatPageContent(
                     },
                     onUpdateTitle = {
                         vm.updateTitle(it)
+                    },
+                    onOpenAgentTeam = {
+                        vm.refreshAgentTeam()
+                        showAgentTeam = true
                     }
                 )
             },
@@ -483,6 +490,17 @@ private fun ChatPageContent(
             )
         }
     }
+
+    if (showAgentTeam) {
+        AgentTeamSheet(
+            state = agentTeamPanel,
+            onOpenConversation = { conversationId ->
+                showAgentTeam = false
+                navigateToChatPage(navController, chatId = conversationId)
+            },
+            onDismiss = { showAgentTeam = false },
+        )
+    }
 }
 
 @Composable
@@ -568,7 +586,8 @@ private fun TopBar(
     previewMode: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
-    onUpdateTitle: (String) -> Unit
+    onUpdateTitle: (String) -> Unit,
+    onOpenAgentTeam: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
@@ -638,6 +657,12 @@ private fun TopBar(
                 }
             ) {
                 Icon(HugeIcons.MessageAdd01, "New Message")
+            }
+
+            if (assistant.enableAgentTeam) {
+                IconButton(onClick = onOpenAgentTeam) {
+                    Icon(HugeIcons.UserGroup, "Agent Team")
+                }
             }
         },
     )
