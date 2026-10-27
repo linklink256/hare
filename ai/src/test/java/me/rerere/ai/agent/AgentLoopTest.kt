@@ -33,6 +33,25 @@ import org.junit.Test
 import java.io.IOException
 
 class AgentLoopTest {
+    @Test
+    fun `cancel preserves received batched tail outside cancelled flow`() = runTest {
+        val received = CompletableDeferred<Unit>()
+        var interrupted: UIMessage? = null
+        provider.stream {
+            emit(StreamChunk.TextStart("text"))
+            emit(StreamChunk.TextDelta("text", "x".repeat(4096)))
+            emit(StreamChunk.TextDelta("text", "TAIL"))
+            received.complete(Unit)
+            awaitCancellation()
+        }
+        val capture = object : AgentHooks by hooks {
+            override suspend fun interruptedStep(message: UIMessage) { interrupted = message }
+        }
+        val job = launch { runToEnd(hooks = capture) }
+        received.await();job.cancelAndJoin()
+        assertEquals(listOf("x".repeat(4096) + "TAIL"), interrupted?.texts())
+    }
+
     private val model = Model(modelId = "test-model")
     private val provider = FakeProvider()
     private val hooks = RecordingHooks(model)

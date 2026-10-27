@@ -17,8 +17,10 @@ object DocumentAsPromptTransformer : InputMessageTransformer {
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
+        if (messages.none { m -> m.parts.any { it is UIMessagePart.Document } }) return messages
         return withContext(Dispatchers.IO) {
             messages.map { message ->
+                if (message.parts.none { it is UIMessagePart.Document }) return@map message
                 message.copy(
                     parts = message.parts.toMutableList().apply {
                         val documents = filterIsInstance<UIMessagePart.Document>()

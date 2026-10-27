@@ -60,6 +60,7 @@ import me.rerere.ai.util.KeyRoulette
 import me.rerere.ai.util.configureReferHeaders
 import me.rerere.ai.util.configureSessionHeaders
 import me.rerere.ai.util.encodeBase64
+import me.rerere.ai.util.streamingJsonBody
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
 import me.rerere.ai.util.mergeCustomHeaders
@@ -201,7 +202,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
                 .configureSessionHeaders(url.toString(), params.sessionId)
                 .post(
-                    json.encodeToString(requestBody).toRequestBody("application/json".toMediaType())
+                    requestBody.streamingJsonBody()
                 )
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build()
@@ -259,13 +260,13 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
                 .configureSessionHeaders(url.toString(), params.sessionId)
                 .post(
-                    json.encodeToString(requestBody).toRequestBody("application/json".toMediaType())
+                    requestBody.streamingJsonBody()
                 )
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build()
         )
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText: request prepared")
 
         val responseId = Uuid.random().toString()
         val decoder = GoogleStreamDecoder(responseId, params.model.modelId)
@@ -285,14 +286,14 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 type: String?,
                 data: String
             ) {
-                Log.i(TAG, "onEvent: $data")
+                // No raw SSE payload logging.
 
                 try {
                     val result = decoder.accept(SseEvent(id = id, event = type, data = data))
                     sendChunks(result.chunks)
                     if (result.completed) close()
                 } catch (e: Throwable) {
-                    Log.e(TAG, "Failed to parse stream event: $data", e)
+                    Log.e(TAG, "Failed to parse stream event (${data.length} chars)", e)
                     close(e)
                 }
             }

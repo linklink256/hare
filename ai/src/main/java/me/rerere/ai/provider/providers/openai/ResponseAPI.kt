@@ -54,6 +54,7 @@ import me.rerere.ai.util.KeyRoulette
 import me.rerere.ai.util.configureReferHeaders
 import me.rerere.ai.util.configureSessionHeaders
 import me.rerere.ai.util.encodeBase64
+import me.rerere.ai.util.streamingJsonBody
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
 import me.rerere.ai.util.mergeCustomHeaders
@@ -128,11 +129,11 @@ class ResponseAPI(
         val request = Request.Builder()
             .url(endpoint.url)
             .apply { endpoint.configureRequest(this) }
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .post(requestBody.streamingJsonBody())
             .addHeader("Content-Type", "application/json")
             .build()
 
-        Log.i(TAG, "generateText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "generateText: request prepared")
 
         // await() waits for the response headers; reading the body can still block.
         client.newCall(request).await().use { response ->
@@ -141,7 +142,7 @@ class ResponseAPI(
             }
 
             val bodyStr = response.body.string()
-            Log.i(TAG, "generateText: $bodyStr")
+            Log.i(TAG, "generateText: request prepared (${bodyStr.length} chars)")
             val bodyJson = json.parseToJsonElement(bodyStr).jsonObject
             parseResponseOutput(bodyJson)
         }
@@ -161,10 +162,10 @@ class ResponseAPI(
         val request = Request.Builder()
             .url(endpoint.url)
             .apply { endpoint.configureRequest(this) }
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .post(requestBody.streamingJsonBody())
             .build()
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText: request prepared")
 
         val decoder = ResponseApiStreamDecoder()
 
@@ -183,7 +184,7 @@ class ResponseAPI(
                 type: String?,
                 data: String
             ) {
-                Log.d(TAG, "onEvent: $id/$type $data")
+                // No raw SSE payload logging (tool output may itself contain logcat).
                 try {
                     val result = decoder.accept(SseEvent(id = id, event = type, data = data))
                     sendChunks(result.chunks)
@@ -208,7 +209,7 @@ class ResponseAPI(
                         Log.i(TAG, "onFailure: $exception")
                     }
                 } catch (e: Throwable) {
-                    Log.w(TAG, "onFailure: failed to parse from $bodyRaw")
+                    Log.w(TAG, "onFailure: error body parsing failed (${bodyRaw?.length ?: 0} chars)")
                     e.printStackTrace()
                 } finally {
                     close(exception)

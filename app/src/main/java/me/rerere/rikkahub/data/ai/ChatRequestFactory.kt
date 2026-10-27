@@ -132,6 +132,7 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
         onAutoCheckpoint: (suspend (List<UIMessage>, UIMessage) -> Unit)? = null,
+        onStreamInterrupted: suspend (UIMessage) -> Unit = {},
     ): Pair<AgentRequest, AgentHooks> {
         val request = AgentRequest(
             provider = usageRecorder.wrap(
@@ -146,6 +147,8 @@ class ChatRequestFactory(
         )
         val compressionState = AutoCompressionState()
         val hooks = object : AgentHooks {
+            override suspend fun interruptedStep(message: UIMessage) = onStreamInterrupted(message)
+
             override suspend fun prepareStep(messages: List<UIMessage>): StepRequest {
                 Log.i(TAG, "prepareStep: ${turn.model.id}")
                 val effective = compressionState.apply(messages)

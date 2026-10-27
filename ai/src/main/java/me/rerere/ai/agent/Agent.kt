@@ -47,6 +47,9 @@ interface AgentHooks {
      * 下标 [newPartsFrom] 及之后的 part 是这一步新生成的；之前的来自更早的步骤，已经处理过一次。
      */
     suspend fun finishStep(message: UIMessage, newPartsFrom: Int): UIMessage = message
+
+    /** Last received stream snapshot when the collector is cancelled; do not emit into its Flow. */
+    suspend fun interruptedStep(message: UIMessage) {}
 }
 
 data class StepRequest(

@@ -167,7 +167,7 @@ class ChatService(
     ) {
         if (error is CancellationException) return
         _errors.update {
-            it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution)
+            (it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution)).takeLast(32)
         }
     }
 
@@ -184,6 +184,8 @@ class ChatService(
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
     fun cleanup() = runCatching { sessionManager.cleanup() }
+
+    suspend fun trimIdleSessions() = sessionManager.trimIdleSessions()
 
     private fun onSessionGenerationFinished(session: ConversationSession, cause: Throwable?) {
         // 取消只来自停止（已自行暂停）或删除，这里再暂停会盖掉停止后用户发送时恢复的队列
@@ -653,6 +655,10 @@ class ChatService(
 
             val (request, hooks) = requestFactory.createAgent(
                 turn, history, session.processingStatus,
+                onStreamInterrupted = { message ->
+                    session.update { it.upsertMessage(replyNodeId, message) }
+                    session.replyMessageId.value = message.id
+                },
                 onAutoCheckpoint = { prefix, checkpoint ->
                     // 只提交仍与请求相符的已完成历史；不改正在生成的消息及其工具状态。
                     session.update { latest ->

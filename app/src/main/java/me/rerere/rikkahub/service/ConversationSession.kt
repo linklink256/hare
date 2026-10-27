@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
 
 private const val TAG = "ConversationSession"
-private const val IDLE_TIMEOUT_MS = 5_000L
+private const val IDLE_TIMEOUT_MS = 1_000L // tablet: persist/release background histories promptly
 
 /** 会话的持久化，由 ChatService 实现 */
 interface ConversationStore {
@@ -276,6 +276,12 @@ class ConversationSession(
     fun cancelJobs(): List<Job> = activeJobs.toList().also { jobs ->
         // Cancel waiters first so a predecessor finishing cannot start the next approval.
         jobs.asReversed().forEach { it.cancel() }
+    }
+
+    suspend fun persistIfIdle(): Boolean {
+        if (isInUse) return false
+        if (existsInDatabase) flush()
+        return !isInUse
     }
 
     private fun scheduleIdleCheck() {

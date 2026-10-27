@@ -23,6 +23,33 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class ConversationSessionManagerTest {
+    @Test fun `trim persists idle sessions and preserves referenced sessions`() = runBlocking {
+        val rig = Rig()
+        try {
+            val idleId = Uuid.random()
+            val idle = rig.manager.acquire(idleId)
+            idle.initialize(load = { Conversation.ofId(idleId).copy(title = "saved") })
+            idle.update { it.copy(title = "latest") }
+            rig.manager.release(idleId)
+            val busy = rig.manager.acquire(Uuid.random())
+            rig.manager.trimIdleSessions()
+            assertNull(rig.manager.get(idleId))
+            assertSame(busy, rig.manager.get(busy.id))
+        } finally { rig.close() }
+    }
+    @Test fun `trim does not remove session after persistence failure`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val store = FakeConversationStore().apply { beforeWrite = { error("disk failure") } }
+        val manager = ConversationSessionManager(scope, store, { Conversation.ofId(it) }, { _, _ -> })
+        try {
+            val id = Uuid.random(); val session = manager.acquire(id)
+            session.initialize(load = { Conversation.ofId(id).copy(title = "old") })
+            session.update { it.copy(title = "only copy") }; manager.release(id)
+            manager.trimIdleSessions()
+            assertSame(session, manager.get(id)); assertEquals("only copy", session.state.value.title)
+        } finally { manager.cleanup();scope.cancel() }
+    }
+
     private class Rig {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val completions = mutableListOf<ConversationSession>()

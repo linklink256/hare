@@ -48,6 +48,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import coil3.memory.MemoryCache
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.gif.AnimatedImageDecoder
@@ -198,7 +199,8 @@ class RouteActivity : ComponentActivity() {
             RikkahubTheme {
                 setSingletonImageLoaderFactory { context ->
                     ImageLoader.Builder(context)
-                        .crossfade(true)
+                        .memoryCache { MemoryCache.Builder().maxSizeBytes(24L * 1024 * 1024).build() }
+                        .crossfade(false) // TB373FU: avoid simultaneous old/new image layers.
                         .components {
                             add(
                                 OkHttpNetworkFetcherFactory(

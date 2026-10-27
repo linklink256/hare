@@ -1,6 +1,10 @@
 package me.rerere.ai.agent
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -9,6 +13,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.sum
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.StreamChunkHandler
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
@@ -113,7 +118,8 @@ internal class AgentLoop(
                 val handler = StreamChunkHandler(params.model)
                 var attempt = stepStart
                 var firstChunk: TimeMark? = null
-                request.provider.streamText(request.providerSetting, messages, params).collect { chunk ->
+                val batch = StreamDeltaBatch()
+                suspend fun accept(chunk: StreamChunk) {
                     try {
                         val mark = firstChunk ?: TimeSource.Monotonic.markNow().also { firstChunk = it }
                         attempt = handler.handle(listOf(attempt), chunk).single()
@@ -123,6 +129,22 @@ internal class AgentLoop(
                     } catch (e: Throwable) {
                         // 合并失败或下游处理失败都不是网络故障，不能重放模型请求
                         throw StreamChunkHandlingException(e)
+                    }
+                }
+                try {
+                    request.provider.streamText(request.providerSetting, messages, params).collect { chunk ->
+                        batch.offer(chunk, System.nanoTime()).forEach { accept(it) }
+                    }
+                } finally {
+                    batch.drain()?.let { tail ->
+                        if (currentCoroutineContext().isActive) {
+                            accept(tail)
+                        } else {
+                            attempt = handler.handle(listOf(attempt), tail).single()
+                            withContext(NonCancellable) {
+                                hooks.interruptedStep(attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO))
+                            }
+                        }
                     }
                 }
                 attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO)

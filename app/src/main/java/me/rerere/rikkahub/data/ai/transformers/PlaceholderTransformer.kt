@@ -121,6 +121,9 @@ object PlaceholderTransformer : InputMessageTransformer, KoinComponent {
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
+        if (messages.none { message -> message.parts.any { it is UIMessagePart.Text && it.text.contains('{') } }) {
+            return messages
+        }
         val settingsStore = get<SettingsStore>()
         return messages.map {
             it.copy(
@@ -151,6 +154,7 @@ object PlaceholderTransformer : InputMessageTransformer, KoinComponent {
             assistant = ctx.assistant
         )
         defaultProvider.placeholders.forEach { (key, placeholderInfo) ->
+            if (!result.contains("{$key}", ignoreCase = true)) return@forEach
             val value = placeholderInfo.resolver(ctx)
             result = result
                 .replace(oldValue = "{{$key}}", newValue = value, ignoreCase = true)

@@ -84,6 +84,18 @@ class ConversationSessionManager(
         onSessionRemoved(removed.id)
     }
 
+    suspend fun trimIdleSessions() {
+        snapshot().forEach { session ->
+            try {
+                if (session.persistIfIdle()) removeIfIdle(session)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Failed saves must retain their only authoritative state.
+            }
+        }
+    }
+
     fun cleanup() {
         val removed = synchronized(lock) {
             snapshot().also { sessions.value = emptyMap() }
