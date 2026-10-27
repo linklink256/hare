@@ -76,7 +76,12 @@ class MessageFtsManager(private val database: AppDatabase) {
      * 增量更新会话的索引：只重写新增或内容变了的消息，删掉已不存在的消息。
      * 每次保存会话都会调用，长会话里大部分消息没变，不必整份删掉重新分词。
      */
-    suspend fun indexConversation(conversation: Conversation) = database.withTransaction {
+    suspend fun indexConversation(conversation: Conversation, previous: Conversation? = null) = database.withTransaction {
+        if (previous != null) {
+            require(previous.id == conversation.id)
+            indexChangedMessages(previous, conversation)
+            return@withTransaction
+        }
         val conversationId = conversation.id.toString()
         val indexed = HashMap<String, IndexedMessage>()
         val stale = mutableListOf<Long>()
@@ -117,6 +122,40 @@ class MessageFtsManager(private val database: AppDatabase) {
             db.execSQL("DELETE FROM message_fts WHERE rowid = ?", arrayOf(rowid))
             db.execSQL("DELETE FROM message_fts_rowid WHERE fts_rowid = ?", arrayOf(rowid))
         }
+    }
+
+    private fun indexChangedMessages(previous: Conversation, current: Conversation) {
+        val conversationId = current.id.toString()
+        val old = previous.messageNodes.flatMap { node -> node.messages.map { it.id to (node.id to it) } }.toMap().toMutableMap()
+        fun remove(messageId: String) {
+            val rows = mutableListOf<Long>()
+            db.query(
+                "SELECT f.rowid FROM message_fts_rowid r JOIN message_fts f ON f.rowid=r.fts_rowid " +
+                    "WHERE r.conversation_id=? AND f.message_id=?",
+                arrayOf(conversationId, messageId),
+            ).use { while (it.moveToNext()) rows.add(it.getLong(0)) }
+            rows.forEach { row ->
+                db.execSQL("DELETE FROM message_fts WHERE rowid=?", arrayOf(row))
+                db.execSQL("DELETE FROM message_fts_rowid WHERE fts_rowid=?", arrayOf(row))
+            }
+        }
+        current.messageNodes.forEach { node -> node.messages.forEach messageLoop@ { message ->
+            val prior = old.remove(message.id)
+            if (prior != null && prior.first == node.id && prior.second.parts == message.parts) return@messageLoop
+            val text = message.extractFtsText()
+            remove(message.id.toString())
+            if (text.isNotBlank()) {
+                db.execSQL(
+                    "INSERT INTO message_fts(text,node_id,message_id,conversation_id) VALUES (?,?,?,?)",
+                    arrayOf(text, node.id.toString(), message.id.toString(), conversationId),
+                )
+                db.execSQL(
+                    "INSERT OR REPLACE INTO message_fts_rowid(fts_rowid,conversation_id) VALUES(last_insert_rowid(),?)",
+                    arrayOf(conversationId),
+                )
+            }
+        } }
+        old.keys.forEach { remove(it.toString()) }
     }
 
     suspend fun deleteConversation(conversationId: String) = database.withTransaction {

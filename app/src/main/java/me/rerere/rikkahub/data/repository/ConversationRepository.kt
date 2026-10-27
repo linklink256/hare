@@ -301,6 +301,12 @@ class ConversationRepository(
         }
     }
 
+    suspend fun getLastMessage(uuid: Uuid): me.rerere.ai.ui.UIMessage? {
+        val node = messageNodeDAO.getLastNodeOfConversation(uuid.toString()) ?: return null
+        val messages = JsonInstant.decodeFromString<List<me.rerere.ai.ui.UIMessage>>(node.messages)
+        return messages.getOrNull(node.selectIndex)
+    }
+
     suspend fun existsConversationById(uuid: Uuid): Boolean {
         return conversationDAO.existsById(uuid.toString())
     }
@@ -325,16 +331,26 @@ class ConversationRepository(
         messageFtsManager.indexConversation(conversation)
     }
 
-    suspend fun updateConversation(conversation: Conversation) {
+    suspend fun updateConversation(conversation: Conversation, previous: Conversation? = null) {
         database.withTransaction {
             conversationDAO.update(
                 conversationToConversationEntity(conversation)
             )
-            // 删除旧的节点，插入新的节点
-            messageNodeDAO.deleteByConversation(conversation.id.toString())
-            saveMessageNodes(conversation.id.toString(), conversation.messageNodes)
+            if (previous == null) {
+                messageNodeDAO.deleteByConversation(conversation.id.toString())
+                saveMessageNodes(conversation.id.toString(), conversation.messageNodes)
+            } else {
+                require(previous.id == conversation.id)
+                val currentIds = conversation.messageNodes.mapTo(hashSetOf()) { it.id }
+                previous.messageNodes.filter { it.id !in currentIds }.forEach {
+                    messageNodeDAO.deleteById(it.id.toString())
+                }
+                changedMessageNodeIndices(previous.messageNodes, conversation.messageNodes).forEach { index ->
+                    saveMessageNode(conversation.id.toString(), index, conversation.messageNodes[index])
+                }
+            }
         }
-        messageFtsManager.indexConversation(conversation)
+        messageFtsManager.indexConversation(conversation, previous)
     }
 
     suspend fun deleteConversation(conversation: Conversation) {
@@ -536,16 +552,19 @@ class ConversationRepository(
     }
 
     private suspend fun saveMessageNodes(conversationId: String, nodes: List<MessageNode>) {
-        val entities = nodes.mapIndexed { index, node ->
+        nodes.forEachIndexed { index, node -> saveMessageNode(conversationId, index, node) }
+    }
+
+    private suspend fun saveMessageNode(conversationId: String, index: Int, node: MessageNode) {
+        messageNodeDAO.insert(
             MessageNodeEntity(
                 id = node.id.toString(),
                 conversationId = conversationId,
                 nodeIndex = index,
                 messages = JsonInstant.encodeToString(node.messages),
-                selectIndex = node.selectIndex
+                selectIndex = node.selectIndex,
             )
-        }
-        messageNodeDAO.insertAll(entities)
+        )
     }
 }
 

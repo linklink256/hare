@@ -17,9 +17,14 @@ class RequestLoggingInterceptor : Interceptor {
 
         val requestHeaders = request.headers.toMap()
         val requestBody = request.body?.let { body ->
-            val buffer = Buffer()
-            body.writeTo(buffer)
-            buffer.readUtf8()
+            val size = body.contentLength()
+            if (!shouldCaptureRequestBody(size, body.isOneShot(), body.isDuplex())) {
+                "[request body omitted: $size bytes; logging limit ${MAX_LOG_BODY_BYTES} bytes]"
+            } else {
+                val buffer = Buffer()
+                body.writeTo(buffer)
+                buffer.readUtf8()
+            }
         }
 
         val response: Response
@@ -72,3 +77,7 @@ class RequestLoggingInterceptor : Interceptor {
         }
     }
 }
+
+internal const val MAX_LOG_BODY_BYTES = 16 * 1024L
+internal fun shouldCaptureRequestBody(length: Long, oneShot: Boolean, duplex: Boolean): Boolean =
+    length in 0..MAX_LOG_BODY_BYTES && !oneShot && !duplex

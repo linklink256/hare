@@ -135,7 +135,7 @@ class ChatService(
             if (previous == null && !conversationRepo.existsConversationById(current.id)) {
                 conversationRepo.insertConversation(current)
             } else {
-                conversationRepo.updateConversation(current)
+                conversationRepo.updateConversation(current, previous)
             }
             if (previous != null && previous.messageNodes !== current.messageNodes) {
                 withContext(Dispatchers.IO) { deleteUnreferencedFiles(previous, current) }
@@ -208,6 +208,10 @@ class ChatService(
     suspend fun getConversation(conversationId: Uuid): Conversation? =
         sessionManager.get(conversationId)?.takeIf { it.isInitialized }?.state?.value
             ?: conversationRepo.getConversationById(conversationId)
+
+    suspend fun getLastMessage(conversationId: Uuid): UIMessage? =
+        sessionManager.get(conversationId)?.takeIf { it.isInitialized }?.state?.value
+            ?.currentMessages?.lastOrNull() ?: conversationRepo.getLastMessage(conversationId)
 
     fun getGenerationJobStateFlow(conversationId: Uuid): Flow<Job?> =
         sessionManager.getGenerationJobStateFlow(conversationId)

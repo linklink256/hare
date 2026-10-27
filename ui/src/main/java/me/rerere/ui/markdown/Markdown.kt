@@ -1,6 +1,12 @@
 package me.rerere.ui.markdown
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -44,8 +50,34 @@ fun Markdown(
     softBreakAsLineBreak: Boolean = true,
     onLinkClick: ((url: String) -> Unit)? = null,
 ) {
+    var starts by rememberSaveable { mutableStateOf(listOf(0)) }
+    val start = starts.last().coerceAtMost(content.length)
+    val window = remember(content, start) { MarkdownRenderWindow.slice(content, start) }
+    if (window.hasPrevious || window.hasNext) {
+        Column(modifier) {
+            Row {
+                TextButton(
+                    enabled = starts.size > 1,
+                    onClick = { starts = starts.dropLast(1) },
+                ) { Text("上一段") }
+                Text("${window.start + 1}–${window.end} / ${content.length} 字符 · 分段显示，原文保留")
+                TextButton(
+                    enabled = window.hasNext,
+                    onClick = { starts = starts + window.end },
+                ) { Text("下一段") }
+            }
+            Markdown(
+                document = rememberMarkdownDocument(window.text, softBreakAsLineBreak),
+                style = style,
+                theme = theme,
+                components = components,
+                onLinkClick = onLinkClick,
+            )
+        }
+        return
+    }
     Markdown(
-        document = rememberMarkdownDocument(content, softBreakAsLineBreak),
+        document = rememberMarkdownDocument(window.text, softBreakAsLineBreak),
         modifier = modifier,
         style = style,
         theme = theme,

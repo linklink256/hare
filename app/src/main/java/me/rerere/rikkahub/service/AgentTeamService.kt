@@ -161,11 +161,11 @@ class AgentTeamService(
         val members = teamRepository.listMembers(teamId)
         val jobs = chatService.getConversationJobs().first()
         return members.map { member ->
-            val conversation = chatService.getConversation(member.conversationId)
+            val lastMessage = chatService.getLastMessage(member.conversationId)
             TeamMemberView(
                 member = member,
                 running = jobs[member.conversationId]?.isActive == true,
-                lastMessage = conversation?.currentMessages?.lastOrNull()?.let(::previewText),
+                lastMessage = lastMessage?.let(::previewText),
             )
         }
     }

@@ -22,6 +22,7 @@ class TemplateTransformer(
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
+        if (isIdentityMessageTemplate(ctx.assistant.messageTemplate)) return messages
         val template = engine.getTemplate(ctx.assistant.id.toString())
         val timeZone = TimeZone.currentSystemDefault()
         return messages.map { message ->
@@ -84,3 +85,5 @@ class AssistantTemplateLoader(private val settingsStore: SettingsStore) : Loader
         return settingsStore.settingsFlow.value.assistants.any { it.id.toString() == templateName }
     }
 }
+
+internal fun isIdentityMessageTemplate(template: String): Boolean = template == "{{ message }}"
