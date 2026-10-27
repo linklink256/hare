@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.hugeicons.stroke.BubbleChat
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiMagic
 import me.rerere.hugeicons.stroke.Alert01
@@ -210,6 +211,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         leadingContent = { CardGroupIcon(HugeIcons.Package, containerColor = containerColor, contentColor = contentColor) },
                         supportingContent = { Text(stringResource(R.string.setting_page_extensions_desc)) },
                         headlineContent = { Text(stringResource(R.string.setting_page_extensions)) },
+                    )
+                    item(
+                        onClick = { navController.navigate(Screen.SettingAutoCompression) },
+                        leadingContent = { CardGroupIcon(HugeIcons.BubbleChat, containerColor = containerColor, contentColor = contentColor) },
+                        supportingContent = { Text("达到阈值后自动生成摘要，保留原始聊天记录") },
+                        headlineContent = { Text("自动上下文压缩") },
                     )
                     item(
                         onClick = { navController.navigate(Screen.SettingAgentTeam) },

@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.ai
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.ai.agent.AgentHooks
 import me.rerere.ai.agent.AgentRequest
@@ -18,6 +19,8 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.prompts.buildMemoryPrompt
+import me.rerere.rikkahub.data.ai.prompts.buildCompressPrompt
+import java.util.Locale
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
@@ -128,6 +131,7 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
+        onAutoCheckpoint: (suspend (List<UIMessage>, UIMessage) -> Unit)? = null,
     ): Pair<AgentRequest, AgentHooks> {
         val request = AgentRequest(
             provider = usageRecorder.wrap(
@@ -140,10 +144,43 @@ class ChatRequestFactory(
             stream = turn.assistant.streamOutput,
             retry = turn.settings.retryPolicy(),
         )
+        val compressionState = AutoCompressionState()
         val hooks = object : AgentHooks {
             override suspend fun prepareStep(messages: List<UIMessage>): StepRequest {
                 Log.i(TAG, "prepareStep: ${turn.model.id}")
-                return buildStep(turn, messages, processingStatus)
+                val effective = compressionState.apply(messages)
+                val step = buildStep(turn, effective, processingStatus)
+                if (!turn.settings.autoCompressionEnabled || onAutoCheckpoint == null) return step
+                val end = automaticCompressionEnd(
+                    messages = effective,
+                    requestMessages = step.messages,
+                    modelContext = turn.model.contextLength,
+                    threshold = turn.settings.autoCompressionTokenThreshold,
+                    keepRecent = turn.settings.autoCompressionKeepRecent,
+                    outputReserve = turn.assistant.maxTokens ?: 4096,
+                ) ?: return step
+                processingStatus.value = "正在自动压缩上下文…"
+                try {
+                    val prefix = effective.take(end)
+                    val summary = generateCompressionSummary(
+                        turn = turn,
+                        messages = prefix,
+                        compressPrompt = buildCompressPrompt(
+                            additionalPrompt = "保留用户目标、约束、关键事实、文件路径、已完成事项和待办；不要继续执行任务。",
+                            locale = Locale.getDefault().displayName,
+                        ),
+                    )
+                    val checkpoint = UIMessage.user(summary).copy(isContextCheckpoint = true)
+                    onAutoCheckpoint(prefix, checkpoint)
+                    compressionState.remember(prefix.last().id, checkpoint)
+                    return buildStep(turn, compressionState.apply(messages), processingStatus)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw IllegalStateException("自动压缩失败，原记录未删除；请重试或调整压缩设置。", e)
+                } finally {
+                    processingStatus.value = null
+                }
             }
 
             override suspend fun previewStep(message: UIMessage, newPartsFrom: Int) =

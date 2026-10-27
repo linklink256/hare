@@ -180,6 +180,10 @@ class SettingsStore internal constructor(
         // 统计
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
 
+        val AUTO_COMPRESSION_ENABLED = booleanPreferencesKey("auto_compression_enabled")
+        val AUTO_COMPRESSION_THRESHOLD = intPreferencesKey("auto_compression_threshold")
+        val AUTO_COMPRESSION_KEEP_RECENT = intPreferencesKey("auto_compression_keep_recent")
+
         // Agent Team（子代理团队）
         val AGENT_TEAM_MODEL = stringPreferencesKey("agent_team_model")
         val AGENT_TEAM_MAX_MEMBERS = intPreferencesKey("agent_team_max_members")

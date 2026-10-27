@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import android.app.Application
 import android.util.Log
+import me.rerere.ai.ui.limitContext
 import androidx.annotation.StringRes
 import androidx.core.net.toUri
 import kotlinx.coroutines.CancellationException
@@ -622,7 +623,26 @@ class ChatService(
             }
             warnIfToolsUnavailable(turn, conversationId)
 
-            val (request, hooks) = requestFactory.createAgent(turn, history, session.processingStatus)
+            val (request, hooks) = requestFactory.createAgent(
+                turn, history, session.processingStatus,
+                onAutoCheckpoint = { prefix, checkpoint ->
+                    // 只提交仍与请求相符的已完成历史；不改正在生成的消息及其工具状态。
+                    session.update { latest ->
+                        val anchor = latest.messageNodes.indexOfFirst { it.currentMessage.id == prefix.last().id }
+                        check(anchor >= 0) { "自动压缩期间对话分支已变化" }
+                        val actual = latest.currentMessages.take(anchor + 1).limitContext(0)
+                        check(actual == prefix.limitContext(0)) { "自动压缩期间消息已编辑，请重试" }
+                        check(latest.currentMessages.take(anchor + 1).lastOrNull { it.isContextCheckpoint }?.id ==
+                            prefix.lastOrNull { it.isContextCheckpoint }?.id) { "自动压缩期间检查点已变化" }
+                        latest.copy(
+                            messageNodes = latest.messageNodes.take(anchor + 1) +
+                                checkpoint.toMessageNode() + latest.messageNodes.drop(anchor + 1),
+                            chatSuggestions = emptyList(),
+                        )
+                    }
+                    session.flush()
+                },
+            )
             var finishReason: AgentFinishReason? = null
             try {
                 runAgent(request, hooks).flowOn(Dispatchers.IO).collect { event ->

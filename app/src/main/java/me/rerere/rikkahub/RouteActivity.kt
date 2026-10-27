@@ -131,6 +131,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMediaPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMediaProviderDetailPage
+import me.rerere.rikkahub.ui.pages.setting.SettingAutoCompressionPage
 import me.rerere.rikkahub.ui.pages.setting.SettingAgentTeamPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
@@ -510,6 +511,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingSpeechPage()
                             }
 
+                            entry<Screen.SettingAutoCompression> {
+                                SettingAutoCompressionPage()
+                            }
+
                             entry<Screen.SettingAgentTeam> {
                                 SettingAgentTeamPage()
                             }
@@ -770,6 +775,9 @@ sealed interface Screen : NavKey {
     /** 子代理（队友）参数 */
     @Serializable
     data object SettingAgentTeam : Screen
+
+    @Serializable
+    data object SettingAutoCompression : Screen
 
     @Serializable
     data object SettingMedia : Screen
