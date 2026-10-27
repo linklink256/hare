@@ -29,6 +29,7 @@ import kotlinx.serialization.json.longOrNull
 import me.rerere.ai.ui.DiffMetadata
 import me.rerere.ai.ui.metadataAs
 import me.rerere.common.http.jsonObjectOrNull
+import me.rerere.highlight.CodeRenderWindow
 import me.rerere.highlight.CodeHighlightText
 import androidx.compose.ui.res.stringResource
 import me.rerere.hugeicons.HugeIcons
@@ -325,7 +326,7 @@ object ShellToolUI : ToolUIRenderer {
                         .shimmer(isLoading = context.loading),
                 ) {
                     Text(
-                        text = combined.lineSequence().take(SUMMARY_MAX_LINES).joinToString("\n"),
+                        text = CodeRenderWindow.preview(combined).lineSequence().take(SUMMARY_MAX_LINES).joinToString("\n"),
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                         fontSize = 11.sp,
                         lineHeight = 14.sp,

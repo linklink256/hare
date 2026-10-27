@@ -114,10 +114,12 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
     val renderer = remember(tool.toolName) { ToolUIRegistry.resolve(tool.toolName) }
     val outputJson = remember(tool) {
         if (tool.isExecuted) {
-            runCatching {
-                JsonInstant.parseToJsonElement(
-                    tool.output.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-                )
+            val textParts = tool.output.filterIsInstance<UIMessagePart.Text>()
+            // Custom summaries are optional. Large results use the bounded raw preview instead
+            // of retaining another complete parsed tree beside the stored original output.
+            val chars = textParts.sumOf { it.text.length.toLong() } + (textParts.size - 1).coerceAtLeast(0)
+            if (chars > 64 * 1024) null else runCatching {
+                JsonInstant.parseToJsonElement(textParts.joinToString("\n") { it.text })
             }.getOrNull()
         } else {
             null

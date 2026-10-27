@@ -57,12 +57,14 @@ fun CodeHighlightText(
     minLines: Int = 1,
 ) {
     val highlighter = LocalCodeHighlighter.current
-    val annotatedString = remember(code, language, colors, highlighter) {
-        if (code.length > MAX_CODE_LENGTH) {
-            AnnotatedString(code)
+    // Guard direct callers too: maxLines alone does not bound shaping or intrinsic width.
+    val renderCode = remember(code) { CodeRenderWindow.preview(code) }
+    val annotatedString = remember(renderCode, language, colors, highlighter) {
+        if (renderCode.length > MAX_CODE_LENGTH) {
+            AnnotatedString(renderCode)
         } else {
             buildAnnotatedString {
-                highlighter.highlight(code, language).forEach { token ->
+                highlighter.highlight(renderCode, language).forEach { token ->
                     buildHighlightText(token, colors)
                 }
             }

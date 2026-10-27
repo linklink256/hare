@@ -11,3 +11,10 @@ local.properties
 .cursor
 .history
 .kotlin
+# Local tablet build/test evidence can contain API credentials and chat databases.
+/results/
+*.jks
+*.keystore
+*.p12
+/app/app.key
+/app/google-services.json

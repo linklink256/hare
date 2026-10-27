@@ -75,6 +75,9 @@ android {
 
     buildTypes {
         release {
+            // Personal TB373FU release: separate identity from upstream and the existing debug install.
+            applicationIdSuffix = ".tablet"
+            isDebuggable = false
             signingConfig = signingConfigs.getByName("release")
             optimization {
                 enable = true

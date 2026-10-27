@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -152,8 +153,12 @@ fun DefaultToolPreview(
                 Text(stringResource(R.string.chat_message_tool_call_label, context.tool.toolName))
             }
         ) {
+            val argumentText = remember(context.arguments) {
+                val raw = context.arguments.toString()
+                if (raw.length > 16 * 1024) raw else JsonInstantPretty.encodeToString(context.arguments)
+            }
             HighlightCodeBlock(
-                code = JsonInstantPretty.encodeToString(context.arguments),
+                code = argumentText,
                 language = "json",
                 style = TextStyle(fontSize = 10.sp, lineHeight = 12.sp)
             )
@@ -167,15 +172,19 @@ fun DefaultToolPreview(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     context.tool.output.fastForEach { part ->
                         when (part) {
-                            is UIMessagePart.Text -> HighlightCodeBlock(
-                                code = runCatching {
-                                    JsonInstantPretty.encodeToString(
-                                        JsonInstant.parseToJsonElement(part.text)
-                                    )
-                                }.getOrElse { part.text },
-                                language = "json",
-                                style = TextStyle(fontSize = 10.sp, lineHeight = 12.sp)
-                            )
+                            is UIMessagePart.Text -> {
+                                // Formatting is optional. Never build a full JSON tree/pretty copy for huge tool output.
+                                val display = remember(part.text) {
+                                    if (part.text.length > 16 * 1024) part.text else runCatching {
+                                        JsonInstantPretty.encodeToString(JsonInstant.parseToJsonElement(part.text))
+                                    }.getOrElse { part.text }
+                                }
+                                HighlightCodeBlock(
+                                    code = display,
+                                    language = "json",
+                                    style = TextStyle(fontSize = 10.sp, lineHeight = 12.sp)
+                                )
+                            }
 
                             is UIMessagePart.Image -> ZoomableAsyncImage(
                                 model = part.url,
