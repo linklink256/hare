@@ -183,7 +183,7 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
             decode = { Uuid.parse(it) },
         ),
         plain(AUTO_COMPRESSION_ENABLED, Settings::autoCompressionEnabled) { copy(autoCompressionEnabled = it) },
-        plain(AUTO_COMPRESSION_THRESHOLD, Settings::autoCompressionTokenThreshold) { copy(autoCompressionTokenThreshold = it) },
+        plain(AUTO_COMPRESSION_THRESHOLD_PERCENT, Settings::autoCompressionThresholdPercent) { copy(autoCompressionThresholdPercent = it) },
         plain(AUTO_COMPRESSION_KEEP_RECENT, Settings::autoCompressionKeepRecent) { copy(autoCompressionKeepRecent = it) },
         plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
         plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },

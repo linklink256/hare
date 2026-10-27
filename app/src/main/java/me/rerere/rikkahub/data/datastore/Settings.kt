@@ -39,9 +39,9 @@ data class Settings(
     val favoriteModels: List<Uuid> = emptyList(),
     /** 队友默认使用的模型；null 表示跟随领队助手的模型 */
     val agentTeamModelId: Uuid? = null,
-    // 自动上下文压缩：token 阈值同时受模型窗口 75% 限制。
+    // 自动上下文压缩：阈值为当前模型上下文窗口的百分比。
     val autoCompressionEnabled: Boolean = true,
-    val autoCompressionTokenThreshold: Int = 64_000,
+    val autoCompressionThresholdPercent: Int = 75,
     val autoCompressionKeepRecent: Int = 6,
     // ---- Agent Team（子代理团队）----
     /** 一个团队最多创建几个队友（含创建失败的），1..32 */

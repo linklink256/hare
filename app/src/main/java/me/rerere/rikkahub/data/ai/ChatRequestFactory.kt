@@ -155,7 +155,7 @@ class ChatRequestFactory(
                     messages = effective,
                     requestMessages = step.messages,
                     modelContext = turn.model.contextLength,
-                    threshold = turn.settings.autoCompressionTokenThreshold,
+                    thresholdPercent = turn.settings.autoCompressionThresholdPercent,
                     keepRecent = turn.settings.autoCompressionKeepRecent,
                     outputReserve = turn.assistant.maxTokens ?: 4096,
                 ) ?: return step

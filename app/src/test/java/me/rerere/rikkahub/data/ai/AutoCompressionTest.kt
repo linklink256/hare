@@ -10,14 +10,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutoCompressionTest {
+    @Test fun `percentage follows model window without absolute token cap`() {
+        assertEquals(96000L, automaticCompressionBudget(128000, 75, 4096))
+        assertEquals(150000L, automaticCompressionBudget(200000, 75, 4096))
+        assertEquals(100000L, automaticCompressionBudget(200000, 50, 4096))
+    }
+    @Test fun `percentages above seventy five are not capped at seventy five`() {
+        assertEquals(90000L, automaticCompressionBudget(100000, 90, 4096))
+    }
+    @Test fun `output reserve can trigger earlier but not later`() {
+        assertEquals(2048L, automaticCompressionBudget(8192, 95, 4096))
+        assertEquals(819L, automaticCompressionBudget(8192, 10, 4096))
+    }
+    @Test fun `percentage is clamped and large windows do not overflow`() {
+        assertEquals(10000L, automaticCompressionBudget(100000, Int.MIN_VALUE, 0))
+        assertEquals(95000L, automaticCompressionBudget(100000, Int.MAX_VALUE, 0))
+        assertEquals(Int.MAX_VALUE.toLong() * 95 / 100, automaticCompressionBudget(Int.MAX_VALUE, 95, 0))
+    }
+    @Test fun `exact percentage boundary triggers and below it does not`() {
+        val messages = List(6) { UIMessage.user("small") }.toMutableList()
+        messages[4] = UIMessage(role = MessageRole.ASSISTANT, parts = emptyList(), lastUsage = TokenUsage(promptTokens = 7489))
+        assertNull(end(messages, threshold = 75, request = messages, window = 10000))
+        messages[4] = messages[4].copy(lastUsage = TokenUsage(promptTokens = 7490))
+        assertNotNull(end(messages, threshold = 75, request = messages, window = 10000))
+    }
+
     private fun history(count: Int = 10) = List(count) { UIMessage.user("x".repeat(900)) }
     private fun end(
         messages: List<UIMessage>,
-        threshold: Int = 1024,
+        threshold: Int = 10,
         keep: Int = 6,
         request: List<UIMessage> = messages.limitContext(0),
-        window: Int = 128000,
-    ) = automaticCompressionEnd(messages, request, window, threshold, keep)
+        window: Int = 10000,
+    ) = automaticCompressionEnd(messages, request, window, threshold, keep, outputReserve = 0)
 
     @Test fun `short history does not trigger`() {
         assertNull(end(List(10) { UIMessage.user("hello") }))
@@ -34,7 +59,7 @@ class AutoCompressionTest {
         assertTrue(end(history(4), keep = 0)!! < 4)
     }
     @Test fun `model window limits high user threshold`() {
-        assertNotNull(end(history(), threshold = 64000, window = 4096))
+        assertNotNull(end(history(), threshold = 75, window = 4096))
     }
     @Test fun `provider last usage triggers before local estimate`() {
         val messages = List(10) { UIMessage.user("short") }.toMutableList()
@@ -66,7 +91,7 @@ class AutoCompressionTest {
     }
     @Test fun `count limit does not cause endless summary of omitted history`() {
         val messages = history()
-        assertNull(end(messages, request = messages.takeLast(2), threshold = 1024))
+        assertNull(end(messages, request = messages.takeLast(2), threshold = 10))
     }
     @Test fun `overlay survives next tool step without altering original history`() {
         val original = history()

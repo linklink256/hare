@@ -181,7 +181,8 @@ class SettingsStore internal constructor(
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
 
         val AUTO_COMPRESSION_ENABLED = booleanPreferencesKey("auto_compression_enabled")
-        val AUTO_COMPRESSION_THRESHOLD = intPreferencesKey("auto_compression_threshold")
+        // New key: the old absolute-token value must never be interpreted as a percent.
+        val AUTO_COMPRESSION_THRESHOLD_PERCENT = intPreferencesKey("auto_compression_threshold_percent")
         val AUTO_COMPRESSION_KEEP_RECENT = intPreferencesKey("auto_compression_keep_recent")
 
         // Agent Team（子代理团队）

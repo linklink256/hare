@@ -47,13 +47,13 @@ private fun estimatePartTokens(part: UIMessagePart): Long = when (part) {
 
 /**
  * Exclusive end of a compressible prefix, or null. Never includes the active last message,
- * pending tools or only a previous checkpoint. Small windows compress before 75% / output reserve.
+ * pending tools or only a previous checkpoint. The configured percentage follows the current model window.
  */
 internal fun automaticCompressionEnd(
     messages: List<UIMessage>,
     requestMessages: List<UIMessage>,
     modelContext: Int,
-    threshold: Int,
+    thresholdPercent: Int,
     keepRecent: Int,
     outputReserve: Int = 4096,
 ): Int? {
@@ -69,12 +69,7 @@ internal fun automaticCompressionEnd(
     val usageTokens = usageMessage?.let {
         it.value.contextTokens()!!.toLong() + estimateContextTokens(messages.drop(it.index + 1))
     } ?: 0L
-    val window = modelContext.coerceAtLeast(1024).toLong()
-    val budget = minOf(
-        threshold.coerceIn(1024, 2_000_000).toLong(),
-        window * 3 / 4,
-        (window - outputReserve.coerceAtLeast(0).toLong() - 2048).coerceAtLeast(window / 4),
-    )
+    val budget = automaticCompressionBudget(modelContext, thresholdPercent, outputReserve)
     if (maxOf(estimateContextTokens(requestMessages), usageTokens) < budget) return null
 
     // Always leave at least the active message. If the configured tail is too large, still make progress.
@@ -86,4 +81,13 @@ internal fun automaticCompressionEnd(
     val activeIds = requestMessages.mapTo(hashSetOf()) { it.id }
     if (messages.subList(freshStart, end).none { it.id in activeIds }) return null
     return end
+}
+
+/** Percent of the full model window; output headroom may only lower the trigger, never raise it. */
+internal fun automaticCompressionBudget(modelContext: Int, thresholdPercent: Int, outputReserve: Int): Long {
+    val window = modelContext.coerceAtLeast(1024).toLong()
+    return minOf(
+        window * thresholdPercent.coerceIn(10, 95) / 100,
+        (window - outputReserve.coerceAtLeast(0).toLong() - 2048).coerceAtLeast(window / 4),
+    )
 }

@@ -54,13 +54,13 @@ fun SettingAutoCompressionPage() {
                     supportingContent = { Text("默认开启，适用于领队与队友。在发送消息及工具循环的下一次模型请求前检查。") },
                 )
                 formItem(
-                    headlineContent = { Text("触发阈值（token）") },
-                    supportingContent = { Text("1024–2000000，默认 64000。结合服务端用量及本地估算，并提前为模型窗口和回复预留空间；不是精确计数。模型窗口请在模型设置中正确填写。") },
+                    headlineContent = { Text("触发比例（%）") },
+                    supportingContent = { Text("10–95%，默认 75%。按当前会话模型的上下文窗口计算，切换模型自动适配。为回复预留空间时可能提前压缩。结合服务端用量与本地估算，并非精确计数；请正确填写模型上下文窗口。") },
                 ) {
                     OutlinedNumberInput(
-                        value = settings.autoCompressionTokenThreshold,
+                        value = settings.autoCompressionThresholdPercent,
                         onValueChange = { value ->
-                            vm.updateSettings { it.copy(autoCompressionTokenThreshold = value.coerceIn(1024, 2_000_000)) }
+                            vm.updateSettings { it.copy(autoCompressionThresholdPercent = value.coerceIn(10, 95)) }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )

@@ -24,6 +24,18 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class SettingsFieldsTest {
+    @Test
+    fun `legacy absolute token threshold is not interpreted as percent`() {
+        val old = mutablePreferencesOf(
+            androidx.datastore.preferences.core.intPreferencesKey("auto_compression_threshold") to 32000,
+            SettingsStore.AUTO_COMPRESSION_ENABLED to false,
+            SettingsStore.AUTO_COMPRESSION_KEEP_RECENT to 12,
+        ).toSettings()
+        assertEquals(75, old.autoCompressionThresholdPercent)
+        assertFalse(old.autoCompressionEnabled)
+        assertEquals(12, old.autoCompressionKeepRecent)
+    }
+
     @OptIn(ExperimentalSerializationApi::class)
     @Test
     fun `every settings property has exactly one field`() {
@@ -166,7 +178,7 @@ private val SAMPLE = Settings(
     backupReminderConfig = BackupReminderConfig(enabled = true),
     sponsorAlertDismissedAt = 7,
     autoCompressionEnabled = false,
-    autoCompressionTokenThreshold = 32000,
+    autoCompressionThresholdPercent = 60,
     autoCompressionKeepRecent = 12,
     agentTeamModelId = id(31),
     agentTeamMaxMembers = 12,
@@ -226,7 +238,7 @@ private val STORED_KEYS = setOf(
     "backup_reminder_config",
     "sponsor_alert_dismissed_at",
     "auto_compression_enabled",
-    "auto_compression_threshold",
+    "auto_compression_threshold_percent",
     "auto_compression_keep_recent",
     "agent_team_model",
     "agent_team_max_members",
