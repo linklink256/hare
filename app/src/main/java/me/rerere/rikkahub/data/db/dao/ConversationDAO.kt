@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
+import me.rerere.rikkahub.data.db.entity.ConversationTitle
 import me.rerere.rikkahub.data.repository.LightConversationEntity
 
 @Dao
@@ -20,6 +21,12 @@ interface ConversationDAO {
 
     @Query("SELECT * FROM conversationentity WHERE assistant_id = :assistantId ORDER BY is_pinned DESC, update_at DESC")
     fun getConversationsOfAssistant(assistantId: String): Flow<List<ConversationEntity>>
+
+    @Query("SELECT title FROM conversationentity WHERE id = :id")
+    suspend fun getTitleById(id: String): String?
+
+    @Query("SELECT m.conversation_id AS conversationId, COALESCE(c.title, '') AS title FROM agent_team_members m LEFT JOIN conversationentity c ON c.id = m.conversation_id WHERE m.team_id = :teamId")
+    fun observeTitlesOfTeam(teamId: String): Flow<List<ConversationTitle>>
 
     @Query("SELECT title FROM conversationentity WHERE assistant_id = :assistantId")
     suspend fun getTitlesOfAssistant(assistantId: String): List<String>

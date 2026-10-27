@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -13,9 +14,10 @@ class TeamExecutionGate {
     private val active = mutableMapOf<Uuid, MutableSet<Uuid>>()
     private val revision = MutableStateFlow(0L)
     private val admissions = mutableMapOf<Uuid, Uuid>()
-    @Volatile private var runningConversations = emptySet<Uuid>()
+    private val runningConversations = MutableStateFlow<Set<Uuid>>(emptySet())
+    val admittedConversations = runningConversations.asStateFlow()
 
-    fun isAdmitted(conversationId: Uuid): Boolean = conversationId in runningConversations
+    fun isAdmitted(conversationId: Uuid): Boolean = conversationId in runningConversations.value
 
     suspend fun <T> withPermit(team: Uuid, limit: suspend () -> Int, conversation: Uuid = Uuid.random(), block: suspend () -> T): T {
         val token = Uuid.random()
@@ -26,7 +28,7 @@ class TeamExecutionGate {
                 if ((slots?.size ?: 0) >= limit().coerceAtLeast(1)) false else {
                     active.getOrPut(team) { mutableSetOf() }.add(token)
                     admissions[token] = conversation
-                    runningConversations = admissions.values.toSet()
+                    runningConversations.value = admissions.values.toSet()
                     true
                 }
             }
@@ -45,7 +47,7 @@ class TeamExecutionGate {
                         if (slots.isEmpty()) active.remove(team)
                     }
                     admissions.remove(token)
-                    runningConversations = admissions.values.toSet()
+                    runningConversations.value = admissions.values.toSet()
                     revision.value++
                 }
             }

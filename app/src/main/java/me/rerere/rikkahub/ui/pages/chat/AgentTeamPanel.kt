@@ -1,7 +1,6 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +14,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,16 +25,16 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.TeamTask
 import me.rerere.rikkahub.data.model.TeamTaskStatus
-import me.rerere.rikkahub.service.TeamMemberView
+import me.rerere.rikkahub.data.model.TeamMemberListItem
 import kotlin.uuid.Uuid
 
 /**
  * 团队面板要展示的全部内容。
- * [members] 来自 AgentTeamService（含"是否在跑"与最近一条消息），[tasks] 来自共享任务板。
+ * [members] 来自 AgentTeamService 的轻量标题/状态投影，[tasks] 来自共享任务板。
  */
 data class AgentTeamPanelState(
     val team: AgentTeam,
-    val members: List<TeamMemberView>,
+    val members: List<TeamMemberListItem>,
     val tasks: List<TeamTask>,
 )
 
@@ -114,57 +112,28 @@ private fun Hint(text: String) {
 
 @Composable
 private fun MemberRow(
-    view: TeamMemberView,
+    view: TeamMemberListItem,
     onOpenConversation: (Uuid) -> Unit,
 ) {
     Surface(
+        onClick = { onOpenConversation(view.member.conversationId) },
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(running = view.running)
-                Text(
-                    text = view.member.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-                Text(
-                    text = " · " + stringResource(
-                        if (view.running) R.string.agent_team_running else R.string.agent_team_idle
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Box(modifier = Modifier.weight(1f))
-                TextButton(onClick = { onOpenConversation(view.member.conversationId) }) {
-                    Text(
-                        text = stringResource(R.string.agent_team_open),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-            }
-            if (view.member.role.isNotBlank()) {
-                Text(
-                    text = view.member.role,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            view.lastMessage?.let { last ->
-                Text(
-                    text = last,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(running = view.running)
+            Text(
+                text = view.displayTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp).weight(1f),
+            )
         }
     }
 }

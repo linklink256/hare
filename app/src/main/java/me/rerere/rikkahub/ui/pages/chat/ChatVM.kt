@@ -12,12 +12,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import java.util.Locale
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -35,24 +37,22 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
-import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.NodeFavoriteTarget
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
-import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.AgentTeamService
+import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
-import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
+import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.utils.UiState
 import me.rerere.rikkahub.utils.UpdateChecker
 import me.rerere.rikkahub.web.ApiException
-import java.util.Locale
-import kotlin.uuid.Uuid
 
 private const val TAG = "ChatVM"
 
@@ -96,11 +96,6 @@ class ChatVM(
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
 
-        // 任一队友跑完一轮就刷新团队面板
-        viewModelScope.launch {
-            chatService.generationDoneFlow.collect { refreshAgentTeam() }
-        }
-
         // 初始化对话
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
@@ -143,24 +138,31 @@ class ChatVM(
     // ---- Agent Team 面板 ----
 
     private val _agentTeamPanel = MutableStateFlow<AgentTeamPanelState?>(null)
+    private var agentTeamObservation: Job? = null
 
     /** 当前会话作为 Lead 的团队面板数据；没建队时为 null */
     val agentTeamPanel: StateFlow<AgentTeamPanelState?> = _agentTeamPanel.asStateFlow()
 
-    /** 拉取名册（含"是否在跑"）与任务板；面板打开时与每轮生成结束时调用 */
+    /** 面板打开期间观察名册、标题和任务板；关闭后取消订阅。 */
     fun refreshAgentTeam() {
-        viewModelScope.launch {
+        agentTeamObservation?.cancel()
+        agentTeamObservation = viewModelScope.launch {
             val team = agentTeamRepository.getTeamByLeadConversation(_conversationId)
             if (team == null) {
                 _agentTeamPanel.value = null
                 return@launch
             }
-            _agentTeamPanel.value = AgentTeamPanelState(
-                team = team,
-                members = agentTeamService.listAgents(team.id),
-                tasks = agentTeamRepository.listTasks(team.id),
-            )
+            combine(
+                agentTeamService.observeMemberList(team.id),
+                agentTeamRepository.observeTasks(team.id),
+            ) { members, tasks -> AgentTeamPanelState(team, members, tasks) }
+                .collect { _agentTeamPanel.value = it }
         }
+    }
+
+    fun stopObservingAgentTeam() {
+        agentTeamObservation?.cancel()
+        agentTeamObservation = null
     }
 
     fun dismissError(id: Uuid) = chatService.dismissError(id)

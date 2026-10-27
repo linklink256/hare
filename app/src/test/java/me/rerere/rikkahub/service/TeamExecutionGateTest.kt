@@ -12,6 +12,18 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class TeamExecutionGateTest {
+    @Test fun admissionFlowTracksStartAndCancellationForMemberLists() = runTest {
+        val gate = TeamExecutionGate()
+        val team = Uuid.random()
+        val member = Uuid.random()
+        assertTrue(gate.admittedConversations.value.isEmpty())
+        val job = launch { gate.withPermit(team, { 1 }, member) { awaitCancellation() } }
+        runCurrent()
+        assertEquals(setOf(member), gate.admittedConversations.value)
+        job.cancelAndJoin()
+        assertTrue(gate.admittedConversations.value.isEmpty())
+    }
+
     @Test fun concurrentEntrantsNeverExceedLimit() = runTest {
         val gate = TeamExecutionGate()
         val team = Uuid.random()

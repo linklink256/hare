@@ -55,6 +55,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.needsAutomaticConversationTitle
 import me.rerere.rikkahub.data.model.bindConfig
 import me.rerere.rikkahub.data.model.cancelInterruptedTools
 import me.rerere.rikkahub.data.model.deleteMessage
@@ -804,7 +805,8 @@ class ChatService(
         withLoadedSession<Unit>(conversationId) { session ->
             val incarnation = session.incarnation
             val conversation = session.state.value
-            if (!force && conversation.title.isNotBlank()) return@withLoadedSession
+            val teammateName = agentTeamRepository.getMemberByConversation(conversationId)?.name
+            if (!force && !needsAutomaticConversationTitle(conversation.title, teammateName)) return@withLoadedSession
 
             val settings = settingsStore.awaitLoaded()
             // 关掉自动生成后只跳过对话结束时的自动调用，手动重新生成照常执行

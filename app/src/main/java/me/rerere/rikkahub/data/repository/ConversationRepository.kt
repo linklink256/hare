@@ -10,6 +10,7 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.datastore.ConversationSortOrder
@@ -64,6 +65,13 @@ class ConversationRepository(
                 }
             }
     }
+
+    suspend fun getTitleById(id: Uuid): String? = conversationDAO.getTitleById(id.toString())
+
+    fun observeTitlesOfTeam(teamId: Uuid): Flow<Map<Uuid, String>> =
+        conversationDAO.observeTitlesOfTeam(teamId.toString())
+            .map { rows -> rows.associate { Uuid.parse(it.conversationId) to it.title } }
+            .distinctUntilChanged()
 
     suspend fun getTitlesOfAssistant(assistantId: Uuid): Set<String> =
         conversationDAO.getTitlesOfAssistant(assistantId.toString()).toSet()

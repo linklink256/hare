@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.service.TeamMemberView
+import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.ui.theme.extendColors
 import kotlin.uuid.Uuid
 
@@ -49,7 +48,7 @@ import kotlin.uuid.Uuid
 @Composable
 fun ColumnScope.AgentTeamConversationList(
     title: String,
-    members: List<TeamMemberView>,
+    members: List<TeamMemberListItem>,
     /** 当前打开的会话：用于和会话列表一致的高亮 */
     selectedConversationId: Uuid?,
     listState: LazyListState,
@@ -126,7 +125,7 @@ fun ColumnScope.AgentTeamConversationList(
 
 @Composable
 private fun AgentTeamMemberItem(
-    view: TeamMemberView,
+    view: TeamMemberListItem,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -148,11 +147,11 @@ private fun AgentTeamMemberItem(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = view.member.name,
+                text = view.displayTitle,
+                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.weight(1f))
 
             AnimatedVisibility(view.running) {
                 Box(

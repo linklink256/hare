@@ -30,6 +30,7 @@ import androidx.compose.material3.adaptive.currentWindowDpSize
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -139,6 +140,11 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val windowAdaptiveInfo = currentWindowDpSize()
     val isBigScreen =
         windowAdaptiveInfo.width > windowAdaptiveInfo.height && windowAdaptiveInfo.width >= 1100.dp
+
+    // Stop the Activity-scoped team observer when the modal drawer is hidden.
+    LaunchedEffect(drawerState.isOpen, isBigScreen) {
+        if (!isBigScreen && !drawerState.isOpen) drawerVm.closeTeam()
+    }
 
     // 进入大屏（永久抽屉）模式时重置抽屉状态为关闭，
     // 避免从横屏旋转回竖屏后，模态抽屉残留为打开状态且无法关闭（#1304）
@@ -492,6 +498,9 @@ private fun ChatPageContent(
     }
 
     if (showAgentTeam) {
+        DisposableEffect(vm) {
+            onDispose { vm.stopObservingAgentTeam() }
+        }
         AgentTeamSheet(
             state = agentTeamPanel,
             onOpenConversation = { conversationId ->

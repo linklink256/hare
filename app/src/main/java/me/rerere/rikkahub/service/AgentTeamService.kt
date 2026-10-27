@@ -1,5 +1,9 @@
 package me.rerere.rikkahub.service
 
+import kotlin.uuid.Uuid
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -11,12 +15,12 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.AgentTeamRules
 import me.rerere.rikkahub.data.model.Conversation
-import me.rerere.rikkahub.data.model.pinChatModel
 import me.rerere.rikkahub.data.model.TeamMember
+import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.data.model.TeamMemberStatus
+import me.rerere.rikkahub.data.model.pinChatModel
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
-import kotlin.uuid.Uuid
 
 /** 团队操作被拒绝（参数非法、名册满、名字被占用……），消息直接回给模型看 */
 class AgentTeamException(message: String) : IllegalStateException(message)
@@ -142,7 +146,7 @@ class AgentTeamService(
             id = conversationId,
             assistantId = resolvedAssistant,
             newConversation = true,
-        ).copy(title = normalized)
+        ) // Leave the title blank so the configured title model can name this conversation.
 
         val member = TeamMember(
             teamId = teamId,
@@ -176,6 +180,22 @@ class AgentTeamService(
         sendToConversation(member.conversationId, text)
         TeamSendOutcome.Sent(member, isRunning(member.conversationId))
     }
+
+    /** UI list observes only roster/title/status. Tool listAgents keeps its message previews. */
+    fun observeMemberList(teamId: Uuid): Flow<List<TeamMemberListItem>> = combine(
+        teamRepository.observeMembers(teamId),
+        conversationRepository.observeTitlesOfTeam(teamId),
+        chatService.getConversationJobs(),
+        teamExecutionGate.admittedConversations,
+    ) { members, titles, jobs, admitted ->
+        members.map { member ->
+            TeamMemberListItem(
+                member = member,
+                running = jobs[member.conversationId]?.isActive == true && member.conversationId in admitted,
+                title = titles[member.conversationId].orEmpty(),
+            )
+        }
+    }.distinctUntilChanged()
 
     suspend fun listAgents(teamId: Uuid): List<TeamMemberView> {
         val members = teamRepository.listMembers(teamId)
