@@ -115,6 +115,8 @@ class ChatService(
     val mcpManager: McpManager,
     private val filesManager: FilesManager,
     private val folderRepository: FolderRepository,
+    private val agentTeamRepository: me.rerere.rikkahub.data.repository.AgentTeamRepository,
+    private val teamExecutionGate: TeamExecutionGate,
 ) {
     /** 一轮生成的结果 */
     private sealed interface TurnResult {
@@ -585,6 +587,28 @@ class ChatService(
      * 失败时报告错误、暂停消息队列并返回 [TurnResult.Failed]；取消时直接抛出。
      */
     private suspend fun runTurn(session: ConversationSession, regenerateNodeId: Uuid? = null): TurnResult {
+        val member = agentTeamRepository.getMemberByConversation(session.id)
+        if (member == null) return runAdmittedTurn(session, regenerateNodeId)
+        if (member.status == me.rerere.rikkahub.data.model.TeamMemberStatus.FAILED) {
+            addError(IllegalStateException("failed teammate cannot generate"), session.id)
+            return TurnResult.Failed
+        }
+        session.processingStatus.value = "等待团队并发名额…"
+        try {
+            return teamExecutionGate.withPermit(
+                team = member.teamId,
+                conversation = session.id,
+                limit = { settingsStore.awaitLoaded().agentTeamMaxMembers },
+            ) {
+                session.processingStatus.value = null
+                runAdmittedTurn(session, regenerateNodeId)
+            }
+        } finally {
+            session.processingStatus.value = null
+        }
+    }
+
+    private suspend fun runAdmittedTurn(session: ConversationSession, regenerateNodeId: Uuid?): TurnResult {
         val conversationId = session.id
         // 先清理上一轮状态；确定历史后，仅为真正的续写恢复消息 ID。
         session.replyMessageId.value = null

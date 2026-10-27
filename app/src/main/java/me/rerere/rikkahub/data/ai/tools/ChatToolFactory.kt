@@ -57,6 +57,7 @@ class ChatToolFactory(
         conversationId: Uuid,
         workspaceCwd: String? = null,
     ): List<Tool> {
+        val isTeamMember = agentTeamRepository.getMemberByConversation(conversationId) != null
         val workspaceTools = createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), workspaceCwd)
         val tools = buildList {
             if (assistant.enableMemory) {
@@ -66,7 +67,7 @@ class ChatToolFactory(
                 addAll(createSearchTools(settings))
             }
             addAll(localTools.getTools(assistant.localTools))
-            if (assistant.enableAgentTeam) {
+            if (canUseTeamTools(assistant.enableAgentTeam, isTeamMember)) {
                 addAll(
                     createAgentTeamTools(
                         teamService = agentTeamService.value,

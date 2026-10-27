@@ -459,7 +459,7 @@ fun createAgentTeamTools(
                 }
             }
         ),
-    )
+    ).map { tool -> guardTeamTool(tool) { teamService.requireLeader(leadConversationId) } }
 }
 
 // ---------------- JSON 小工具 ----------------

@@ -110,6 +110,7 @@ val appModule = module {
             conversationRepository = get(),
             chatService = get(),
             settingsStore = get(),
+            teamExecutionGate = get(),
         )
     }
 
@@ -125,6 +126,8 @@ val appModule = module {
         )
     }
 
+    single { me.rerere.rikkahub.service.TeamExecutionGate() }
+
     single {
         ChatService(
             context = get(),
@@ -138,7 +141,9 @@ val appModule = module {
             metaGenerator = get(),
             mcpManager = get(),
             filesManager = get(),
-            folderRepository = get()
+            folderRepository = get(),
+            agentTeamRepository = get(),
+            teamExecutionGate = get(),
         )
     }
 

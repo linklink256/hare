@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -58,10 +60,38 @@ class AgentTeamService(
     private val conversationRepository: ConversationRepository,
     private val chatService: ChatService,
     private val settingsStore: SettingsStore,
+    private val teamExecutionGate: TeamExecutionGate,
 ) {
+    // Serialize roster/start decisions across suspension points; runtime admission is separately enforced by ChatService.
+    private val dispatchMutex = Mutex()
+
+    suspend fun requireLeader(conversationId: Uuid) {
+        if (teamRepository.getMemberByConversation(conversationId) != null) {
+            throw AgentTeamException("teammates cannot use leader tools or create nested teams")
+        }
+    }
+
+    private suspend fun requireRootTeam(teamId: Uuid): AgentTeam {
+        val team = teamRepository.getTeam(teamId) ?: throw AgentTeamException("team not found")
+        requireLeader(team.leadConversationId)
+        return team
+    }
+
+    private suspend fun checkCapacity(teamId: Uuid, target: Uuid? = null) {
+        val limit = settingsStore.awaitLoaded().agentTeamMaxMembers.coerceAtLeast(1)
+        val jobs = chatService.getConversationJobs().first()
+        // A queued/lazy/cancelling job still reserves this member until completion.
+        if (target != null && jobs[target] != null) return
+        val occupied = AgentTeamRules.occupiedSlots(teamRepository.listMembers(teamId)) { jobs[it] != null }
+        if (occupied >= limit) throw AgentTeamException(
+            "already $occupied/$limit teammates running or queued; wait for one to finish, or raise the limit in settings"
+        )
+    }
+
     /** Lead 会话第一次用到团队工具时按需建队 */
-    suspend fun getOrCreateTeam(leadConversationId: Uuid): AgentTeam {
-        teamRepository.getTeamByLeadConversation(leadConversationId)?.let { return it }
+    suspend fun getOrCreateTeam(leadConversationId: Uuid): AgentTeam = dispatchMutex.withLock {
+        requireLeader(leadConversationId)
+        teamRepository.getTeamByLeadConversation(leadConversationId)?.let { return@withLock it }
         val lead = chatService.getConversation(leadConversationId)
         // 上限取自设置里的「子代理团队」页；改动只影响之后新建的团队
         val settings = settingsStore.awaitLoaded()
@@ -72,7 +102,7 @@ class AgentTeamService(
             maxTasks = settings.agentTeamMaxTasks,
         )
         teamRepository.upsertTeam(team)
-        return team
+        team
     }
 
     /**
@@ -87,8 +117,8 @@ class AgentTeamService(
         role: String = "",
         initialTask: String? = null,
         assistantId: Uuid? = null,
-    ): TeamMember {
-        val team = teamRepository.getTeam(teamId) ?: throw AgentTeamException("team not found")
+    ): TeamMember = dispatchMutex.withLock {
+        val team = requireRootTeam(teamId)
         val normalized = AgentTeamRules.normalizeMemberName(name)
         if (!AgentTeamRules.isValidMemberName(normalized)) {
             throw AgentTeamException(
@@ -101,19 +131,7 @@ class AgentTeamService(
                 "teammate name '$normalized' is already taken; names are permanent and never reused"
             )
         }
-        // 上限是"同时运行"的并发名额：失败的和已经跑完（空闲）的队友都不占名额，
-        // 且直接读设置里的实时值，改完立即生效（不必等新建团队）。
-        val limit = settingsStore.awaitLoaded().agentTeamMaxMembers
-        val jobs = chatService.getConversationJobs().first()
-        val occupied = AgentTeamRules.occupiedSlots(teamRepository.listMembers(teamId)) {
-            jobs[it]?.isActive == true
-        }
-        if (occupied >= limit) {
-            throw AgentTeamException(
-                "already $occupied/$limit teammates running; " +
-                    "wait for one to finish, or raise the limit in settings"
-            )
-        }
+        checkCapacity(teamId)
 
         val settings = settingsStore.awaitLoaded()
         val lead = chatService.getConversation(team.leadConversationId)
@@ -143,18 +161,20 @@ class AgentTeamService(
         if (!initialTask.isNullOrBlank()) {
             sendToConversation(conversationId, initialTask)
         }
-        return member
+        member
     }
 
     /** 非阻塞派活/传话：只保证消息进了队友的收件箱，不保证它已经处理完 */
-    suspend fun sendToMember(teamId: Uuid, target: String, text: String): TeamSendOutcome {
+    suspend fun sendToMember(teamId: Uuid, target: String, text: String): TeamSendOutcome = dispatchMutex.withLock {
+        requireRootTeam(teamId)
         val member = teamRepository.getMemberByName(teamId, target)
-            ?: return TeamSendOutcome.MemberNotFound
+            ?: return@withLock TeamSendOutcome.MemberNotFound
         if (member.status == TeamMemberStatus.FAILED) {
             throw AgentTeamException("teammate '${member.name}' failed to start")
         }
+        checkCapacity(teamId, member.conversationId)
         sendToConversation(member.conversationId, text)
-        return TeamSendOutcome.Sent(member, isRunning(member.conversationId))
+        TeamSendOutcome.Sent(member, isRunning(member.conversationId))
     }
 
     suspend fun listAgents(teamId: Uuid): List<TeamMemberView> {
@@ -164,7 +184,8 @@ class AgentTeamService(
             val lastMessage = chatService.getLastMessage(member.conversationId)
             TeamMemberView(
                 member = member,
-                running = jobs[member.conversationId]?.isActive == true,
+                running = jobs[member.conversationId]?.isActive == true &&
+                    teamExecutionGate.isAdmitted(member.conversationId),
                 lastMessage = lastMessage?.let(::previewText),
             )
         }
