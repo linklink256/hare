@@ -78,7 +78,7 @@ android {
             // Personal TB373FU release: separate identity from upstream and the existing debug install.
             applicationIdSuffix = ".tablet"
             isDebuggable = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (providers.gradleProperty("tabletUnsigned").orNull == "true") null else signingConfigs.getByName("release")
             optimization {
                 enable = true
             }
