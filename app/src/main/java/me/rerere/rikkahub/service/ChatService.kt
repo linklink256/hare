@@ -602,6 +602,13 @@ class ChatService(
                 team = member.teamId,
                 conversation = session.id,
                 limit = { settingsStore.awaitLoaded().agentTeamMaxMembers },
+                onFinished = { elapsedMillis ->
+                    try {
+                        agentTeamRepository.updateMemberElapsed(session.id, elapsedMillis)
+                    } catch (e: Exception) {
+                        addError(e, session.id)
+                    }
+                },
             ) {
                 session.processingStatus.value = null
                 runAdmittedTurn(session, regenerateNodeId)

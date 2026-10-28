@@ -1,10 +1,12 @@
 package me.rerere.rikkahub.service
 
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -199,13 +201,31 @@ class AgentTeamService(
         conversationRepository.observeTitlesOfTeam(teamId),
         chatService.getConversationJobs(),
         teamExecutionGate.admittedConversations,
-    ) { members, titles, jobs, admitted ->
-        members.map { member ->
+        teamExecutionGate.runTimings,
+    ) { members, titles, jobs, admitted, timings ->
+        val rows = members.map { member ->
             TeamMemberListItem(
                 member = member,
                 running = jobs[member.conversationId]?.isActive == true && member.conversationId in admitted,
                 title = titles[member.conversationId].orEmpty(),
+                elapsedMillis = member.lastRunElapsedMillis,
             )
+        }
+        rows to timings.filterKeys { id -> members.any { it.conversationId == id } }
+    }.transformLatest { (rows, timings) ->
+        fun currentRows(): List<TeamMemberListItem> {
+            val now = System.nanoTime()
+            return rows.map { row ->
+                timings[row.member.conversationId]?.let { timing ->
+                    row.copy(elapsedMillis = timing.elapsedMillisAt(now))
+                } ?: row
+            }
+        }
+        emit(currentRows())
+        // This flow is collected only while the sheet/drawer is visible; no global ticker or DB polling.
+        while (timings.values.any { it.running }) {
+            delay(1000)
+            emit(currentRows())
         }
     }.distinctUntilChanged()
 

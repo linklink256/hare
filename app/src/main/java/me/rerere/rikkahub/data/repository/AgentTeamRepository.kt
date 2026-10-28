@@ -97,6 +97,10 @@ class AgentTeamRepository(
     suspend fun getMemberByConversation(conversationId: Uuid): TeamMember? =
         agentTeamDAO.getMemberByConversation(conversationId.toString())?.toModel()
 
+    suspend fun updateMemberElapsed(conversationId: Uuid, elapsedMillis: Long) {
+        agentTeamDAO.updateMemberElapsed(conversationId.toString(), elapsedMillis.coerceAtLeast(0L))
+    }
+
     suspend fun countMembers(teamId: Uuid): Int = agentTeamDAO.countMembers(teamId.toString())
 
     suspend fun upsertMember(member: TeamMember) {
@@ -239,6 +243,7 @@ class AgentTeamRepository(
         status = runCatching { TeamMemberStatus.valueOf(status) }
             .getOrDefault(TeamMemberStatus.PROVISIONING),
         createdAt = Instant.ofEpochMilli(createdAt),
+        lastRunElapsedMillis = lastRunElapsedMillis,
     )
 
     private fun TeamMember.toEntity() = AgentTeamMemberEntity(
@@ -249,6 +254,7 @@ class AgentTeamRepository(
         role = role,
         status = status.name,
         createdAt = createdAt.toEpochMilli(),
+        lastRunElapsedMillis = lastRunElapsedMillis,
     )
 
     private fun AgentTeamTaskEntity.toModel() = TeamTask(

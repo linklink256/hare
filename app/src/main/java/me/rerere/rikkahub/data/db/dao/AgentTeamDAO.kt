@@ -53,6 +53,9 @@ interface AgentTeamDAO {
     @Query("SELECT * FROM agent_team_members WHERE conversation_id = :conversationId LIMIT 1")
     suspend fun getMemberByConversation(conversationId: String): AgentTeamMemberEntity?
 
+    @Query("UPDATE agent_team_members SET last_run_elapsed_millis = :elapsedMillis WHERE conversation_id = :conversationId")
+    suspend fun updateMemberElapsed(conversationId: String, elapsedMillis: Long)
+
     @Query("SELECT COUNT(*) FROM agent_team_members WHERE team_id = :teamId")
     suspend fun countMembers(teamId: String): Int
 

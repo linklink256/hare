@@ -127,12 +127,20 @@ private fun MemberRow(
     ConversationRow(
         title = view.displayTitle,
         running = view.running,
+        showElapsed = true,
+        elapsedMillis = view.elapsedMillis,
         onClick = { onOpenConversation(view.member.conversationId) },
     )
 }
 
 @Composable
-private fun ConversationRow(title: String, running: Boolean, onClick: () -> Unit) {
+private fun ConversationRow(
+    title: String,
+    running: Boolean,
+    onClick: () -> Unit,
+    showElapsed: Boolean = false,
+    elapsedMillis: Long? = null,
+) {
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
@@ -152,6 +160,9 @@ private fun ConversationRow(title: String, running: Boolean, onClick: () -> Unit
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 8.dp).weight(1f),
             )
+            if (showElapsed) {
+                TeamTaskElapsed(elapsedMillis, Modifier.padding(start = 8.dp))
+            }
         }
     }
 }

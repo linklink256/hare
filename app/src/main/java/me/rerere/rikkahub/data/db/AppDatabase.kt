@@ -62,7 +62,7 @@ import me.rerere.rikkahub.utils.JsonInstant
         AgentTeamMemberEntity::class,
         AgentTeamTaskEntity::class,
     ],
-    version = 33,
+    version = 34,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -89,6 +89,7 @@ import me.rerere.rikkahub.utils.JsonInstant
         AutoMigration(from = 29, to = 30),
         AutoMigration(from = 31, to = 32),
         AutoMigration(from = 32, to = 33),
+        AutoMigration(from = 33, to = 34),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)

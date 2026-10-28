@@ -61,6 +61,8 @@ data class TeamMember(
     val status: TeamMemberStatus = TeamMemberStatus.PROVISIONING,
     @Serializable(with = InstantSerializer::class)
     val createdAt: Instant = Instant.now(),
+    /** Last admitted execution round; null means no measured run (including old records). */
+    val lastRunElapsedMillis: Long? = null,
 )
 
 @Serializable

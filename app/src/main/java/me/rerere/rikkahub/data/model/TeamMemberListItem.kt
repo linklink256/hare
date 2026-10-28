@@ -5,6 +5,7 @@ data class TeamMemberListItem(
     val member: TeamMember,
     val running: Boolean,
     val title: String,
+    val elapsedMillis: Long? = null,
 ) {
     val displayTitle: String get() = title.takeIf { it.isNotBlank() } ?: member.name
 }

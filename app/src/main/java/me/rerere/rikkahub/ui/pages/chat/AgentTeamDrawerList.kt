@@ -142,6 +142,8 @@ fun ColumnScope.AgentTeamConversationList(
             AgentTeamConversationItem(
                 title = view.displayTitle,
                 running = view.running,
+                showElapsed = true,
+                elapsedMillis = view.elapsedMillis,
                 selected = view.member.conversationId == selectedConversationId,
                 onClick = { onClick(view.member.conversationId) },
                 modifier = Modifier.animateItem(),
@@ -157,6 +159,8 @@ private fun AgentTeamConversationItem(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showElapsed: Boolean = false,
+    elapsedMillis: Long? = null,
 ) {
     // 与会话列表的 ConversationItem 保持同一套样式：胶囊高亮 + 一行标题 + 生成中的小圆点
     Box(
@@ -182,6 +186,9 @@ private fun AgentTeamConversationItem(
                 overflow = TextOverflow.Ellipsis,
             )
 
+            if (showElapsed) {
+                TeamTaskElapsed(elapsedMillis, Modifier.padding(horizontal = 8.dp))
+            }
             AnimatedVisibility(running) {
                 Box(
                     modifier = Modifier

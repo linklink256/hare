@@ -51,6 +51,8 @@ data class AgentTeamMemberEntity(
     val status: String,
     @ColumnInfo("created_at")
     val createdAt: Long,
+    @ColumnInfo(name = "last_run_elapsed_millis", defaultValue = "NULL")
+    val lastRunElapsedMillis: Long? = null,
 )
 
 /** 共享任务板。`blocked_by` 是 JSON 数组字符串，`revision` 用于 compare-and-set。 */
