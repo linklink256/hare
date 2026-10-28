@@ -338,8 +338,9 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ThinkingBlock -> {
                 if (block.steps.isNotEmpty()) {
                     val isReasoningOnlyBlock = block.steps.fastAll { it is ThinkingStep.ReasoningStep }
+                    // 尺寸动画由 ChainOfThought 内部 Column 自带（defaultSpatialSpec），
+                    // 这里不再叠加一层外层 animateContentSize，避免同一尺寸变化被动画两遍。
                     ChainOfThought(
-                        modifier = Modifier.animateContentSize(),
                         steps = block.steps,
                         collapsedAdaptiveWidth = isReasoningOnlyBlock,
                         cardColors = CardDefaults.cardColors(
