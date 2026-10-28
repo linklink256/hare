@@ -110,6 +110,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
+    // null = 还没判定完；只有明确是团队成员（子代理）会话才收起输入区
+    val isTeamMemberConversation by vm.isTeamMemberConversation.collectAsStateWithLifecycle()
 
     // 新会话发出第一条消息前，跟随抽屉当前选中的文件夹（#2133）
     val drawerVm: ChatDrawerVM = koinViewModel(viewModelStoreOwner = LocalContext.current as ComponentActivity)
@@ -226,6 +228,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     chatListState = chatListState,
                     assistant = assistant,
                     currentChatModel = currentChatModel,
+                    isTeamMemberConversation = isTeamMemberConversation,
                     bigScreen = true,
                     errors = errors,
                     onDismissError = { vm.dismissError(it) },
@@ -259,6 +262,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     chatListState = chatListState,
                     assistant = assistant,
                     currentChatModel = currentChatModel,
+                    isTeamMemberConversation = isTeamMemberConversation,
                     bigScreen = false,
                     errors = errors,
                     onDismissError = { vm.dismissError(it) },
@@ -287,6 +291,8 @@ private fun ChatPageContent(
     chatListState: LazyListState,
     assistant: Assistant,
     currentChatModel: Model?,
+    /** 当前会话是否为团队成员（子代理）会话；null = 还没判定完 */
+    isTeamMemberConversation: Boolean?,
     errors: List<ChatError>,
     onDismissError: (Uuid) -> Unit,
     onClearAllErrors: () -> Unit,
@@ -369,6 +375,10 @@ private fun ChatPageContent(
                     settings = setting,
                     assistant = assistant,
                     chatModel = currentChatModel,
+                    // 仅团队成员（子代理）会话把输入区收成左下角只读模型胶囊；
+                    // 普通/领队会话（false）与改动前完全一致；
+                    // null = 归属还没查完，此时胶囊与完整输入区都不渲染，避免闪出可发送界面。
+                    isTeamMemberConversation = isTeamMemberConversation,
                     hazeState = hazeState,
                     completionProviders = completionProviders,
                     onCancelClick = {
@@ -432,8 +442,12 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onEdit = {
-                    inputState.editingMessage = it.id
-                    inputState.setContents(it.parts)
+                    // 成员（子代理）会话整体不渲染输入区，这里显式忽略，避免编辑态被写进
+                    // inputState 后在别处（草稿建议/队列面板）意外重现可编辑入口。
+                    if (isTeamMemberConversation == false) {
+                        inputState.editingMessage = it.id
+                        inputState.setContents(it.parts)
+                    }
                 },
                 onForkMessage = {
                     scope.launch {
@@ -452,8 +466,11 @@ private fun ChatPageContent(
                     vm.selectMessageNode(newNode.id, newNode.selectIndex)
                 },
                 onClickSuggestion = { suggestion ->
-                    inputState.editingMessage = null
-                    inputState.setMessageText(suggestion)
+                    // 同上：成员会话没有输入区，草稿建议只写状态也不该生效（不清空已有草稿）。
+                    if (isTeamMemberConversation == false) {
+                        inputState.editingMessage = null
+                        inputState.setMessageText(suggestion)
+                    }
                 },
                 onTranslate = { message, locale ->
                     vm.translateMessage(message, locale)

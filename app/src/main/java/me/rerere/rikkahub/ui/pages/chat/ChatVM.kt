@@ -14,6 +14,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import java.util.Locale
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -92,6 +93,13 @@ class ChatVM(
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    // 当前会话是否团队成员（子代理）会话。用与编排层同一个判定入口
+    // （ChatService.runTurn / ChatToolFactory 都是 agentTeamRepository.getMemberByConversation）。
+    // null = 还没从库里查到（含查询失败）：UI 此时既不渲染胶囊也不渲染完整输入区，
+    // 避免成员会话在判定完成前闪出可发送界面。领队会话不在成员表里，判定为 false。
+    private val _isTeamMemberConversation = MutableStateFlow<Boolean?>(null)
+    val isTeamMemberConversation: StateFlow<Boolean?> = _isTeamMemberConversation.asStateFlow()
+
     init {
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
@@ -103,6 +111,20 @@ class ChatVM(
 
         // 记住对话ID, 方便下次启动恢复
         context.writeStringPreference("lastConversationId", _conversationId.toString())
+
+        // 判定本会话是否为团队成员（子代理）会话，供输入区收起为只读模型胶囊用。
+        // 查询失败时保持 null（输入区与胶囊都不渲染），并且不把失败当成普通会话——
+        // 宁可暂时没有输入入口，也不让成员会话露出可发送界面。
+        viewModelScope.launch {
+            _isTeamMemberConversation.value = try {
+                agentTeamRepository.getMemberByConversation(_conversationId) != null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "isTeamMemberConversation: ${e.message}")
+                null
+            }
+        }
     }
 
     override fun onCleared() {
