@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,12 +29,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +52,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
@@ -242,8 +246,10 @@ private fun PinnedHeader(
     }
 }
 
+internal val ConversationListRowMinHeight = 48.dp
+
 @Composable
-private fun ConversationItem(
+internal fun ConversationItem(
     conversation: Conversation,
     selected: Boolean,
     loading: Boolean,
@@ -285,15 +291,17 @@ private fun ConversationItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // The same baseline for regular/team rows; large accessibility text may grow both.
+                .heightIn(min = ConversationListRowMinHeight)
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = conversation.title.ifBlank { stringResource(id = R.string.chat_page_new_message) },
+                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.weight(1f))
 
             // 置顶图标
             AnimatedVisibility(conversation.isPinned) {
@@ -318,16 +326,20 @@ private fun ConversationItem(
 
             // 团队入口：进入该 Lead 会话的队友列表
             if (isTeamLead) {
-                IconButton(
-                    onClick = { onOpenTeam(conversation) },
-                    modifier = Modifier.size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = HugeIcons.ArrowRight01,
-                        contentDescription = stringResource(R.string.agent_team_open_team),
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // Keep the visual button inside the shared 48dp row, without its own
+                // minimum-layout padding. Compose still expands touch bounds to 48dp.
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    IconButton(
+                        onClick = { onOpenTeam(conversation) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = HugeIcons.ArrowRight01,
+                            contentDescription = stringResource(R.string.agent_team_open_team),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
