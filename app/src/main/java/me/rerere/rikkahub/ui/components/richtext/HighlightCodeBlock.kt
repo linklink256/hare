@@ -27,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,7 +58,7 @@ import kotlinx.datetime.toLocalDateTime
 import me.rerere.highlight.HighlightTextColorPalette
 import me.rerere.highlight.buildHighlightText
 import me.rerere.highlight.CodeHighlightText
-import me.rerere.highlight.CodeRenderWindow
+import me.rerere.highlight.CodeDisplayContent
 import me.rerere.highlight.CodeHighlighter
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
@@ -107,12 +106,8 @@ fun HighlightCodeBlock(
     val navController = LocalNavController.current
     val context = LocalContext.current
     val settings = LocalSettings.current
-    // Bound before lines(), text shaping and preview creation, not merely after layout.
-    var windowStarts by remember(code) { mutableStateOf(listOf(0)) }
-    val codeWindow = remember(code, windowStarts) { CodeRenderWindow.slice(code, windowStarts.last()) }
-    val windowed = codeWindow.hasPrevious || codeWindow.hasNext
     val normalizedLanguage = remember(language) { language.lowercase() }
-    val canInlinePreview = completeCodeBlock && !windowed && normalizedLanguage in PREVIEWABLE_LANGUAGES
+    val canInlinePreview = completeCodeBlock && normalizedLanguage in PREVIEWABLE_LANGUAGES
     var previewMode by remember(canInlinePreview, code, normalizedLanguage) {
         mutableStateOf(false)
     }
@@ -179,7 +174,7 @@ fun HighlightCodeBlock(
                             .height(200.dp),
                     )
                 }
-                completeCodeBlock && !windowed && normalizedLanguage == "mermaid" -> {
+                completeCodeBlock && normalizedLanguage == "mermaid" -> {
                     Mermaid(
                         code = code,
                         modifier = Modifier.fillMaxWidth(),
@@ -187,10 +182,13 @@ fun HighlightCodeBlock(
                 }
                 else -> {
                     val textStyle = LocalTextStyle.current.merge(style)
-                    val codeLines = remember(codeWindow.text) { codeWindow.text.lines() }
-                    val collapsedCode = remember(codeLines) { codeLines.take(COLLAPSE_LINES).joinToString("\n") }
-                    val displayCode = if (isExpanded) codeWindow.text else collapsedCode
-                    val displayLines = remember(displayCode) { displayCode.lines() }
+                    val hasCollapsedLines = remember(code) { code.lineSequence().drop(COLLAPSE_LINES).any() }
+                    val displayCode = remember(code, isExpanded) {
+                        CodeDisplayContent.visibleCode(code, collapsed = !isExpanded, collapsedLines = COLLAPSE_LINES)
+                    }
+                    val displayLines = remember(displayCode, showLineNumbers) {
+                        if (showLineNumbers) displayCode.lines() else emptyList()
+                    }
 
                     // 如果显示行号且自动换行，需要逐行渲染以保持对齐
                     when {
@@ -216,24 +214,9 @@ fun HighlightCodeBlock(
                         }
                     }
 
-                    if (windowed) {
-                        Text(
-                            text = "显示片段 ${codeWindow.start + 1}–${codeWindow.end} / ${codeWindow.total} 字符；复制和导出保留全文",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (codeWindow.hasPrevious) {
-                                TextButton(onClick = { windowStarts = windowStarts.dropLast(1) }) { Text("上一片段") }
-                            }
-                            if (codeWindow.hasNext) {
-                                TextButton(onClick = { windowStarts = windowStarts + codeWindow.end }) { Text("下一片段") }
-                            }
-                        }
-                    }
                     Spacer(Modifier.height(4.dp))
                     // 代码折叠按钮
-                    if (settings.displaySetting.codeBlockAutoCollapse && codeLines.size > COLLAPSE_LINES) {
+                    if (settings.displaySetting.codeBlockAutoCollapse && hasCollapsedLines) {
                         Box(
                             modifier = Modifier
                                 .onClick {

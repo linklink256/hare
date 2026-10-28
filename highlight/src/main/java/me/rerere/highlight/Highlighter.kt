@@ -17,8 +17,6 @@ import androidx.compose.ui.unit.sp
 import me.rerere.highlight.core.HighlightEngine
 import me.rerere.highlight.languages.builtinLanguages
 
-private const val MAX_CODE_LENGTH = 4096
-
 val LocalCodeHighlighter = staticCompositionLocalOf { CodeHighlighter() }
 
 /**
@@ -57,14 +55,13 @@ fun CodeHighlightText(
     minLines: Int = 1,
 ) {
     val highlighter = LocalCodeHighlighter.current
-    // Guard direct callers too: maxLines alone does not bound shaping or intrinsic width.
-    val renderCode = remember(code) { CodeRenderWindow.preview(code) }
-    val annotatedString = remember(renderCode, language, colors, highlighter) {
-        if (renderCode.length > MAX_CODE_LENGTH) {
-            AnnotatedString(renderCode)
+    // Limit syntax-analysis cost, never the displayed source. Long text is plain but complete.
+    val annotatedString = remember(code, language, colors, highlighter) {
+        if (!CodeDisplayContent.shouldHighlight(code)) {
+            AnnotatedString(code)
         } else {
             buildAnnotatedString {
-                highlighter.highlight(renderCode, language).forEach { token ->
+                highlighter.highlight(code, language).forEach { token ->
                     buildHighlightText(token, colors)
                 }
             }
