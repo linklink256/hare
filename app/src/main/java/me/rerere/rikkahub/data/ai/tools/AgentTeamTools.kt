@@ -126,7 +126,9 @@ fun createAgentTeamTools(
             name = AgentTeamToolNames.LIST_AGENTS,
             description = """
                 List every teammate on this team with its status, whether it is currently generating,
-                and a short preview of its latest message. Use it to see who is doing what.
+                and the full text of its latest message (last_message), without preview truncation.
+                Reasoning and tool logs are excluded. While a teammate is running, the text may still
+                be incomplete; wait_agent waits for completion. Use it to read teammate reports.
             """.trimIndent().replace("\n", " "),
             parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
             execute = {

@@ -21,6 +21,7 @@ import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMember
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.data.model.TeamMemberStatus
+import me.rerere.rikkahub.data.model.fullTeamReplyText
 import me.rerere.rikkahub.data.model.pinChatModel
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
@@ -195,7 +196,7 @@ class AgentTeamService(
         )
     }.distinctUntilChanged()
 
-    /** UI list observes only roster/title/status. Tool listAgents keeps its message previews. */
+    /** UI list observes only roster/title/status. Tool listAgents returns full latest-message text. */
     fun observeMemberList(teamId: Uuid): Flow<List<TeamMemberListItem>> = combine(
         teamRepository.observeMembers(teamId),
         conversationRepository.observeTitlesOfTeam(teamId),
@@ -238,7 +239,7 @@ class AgentTeamService(
                 member = member,
                 running = jobs[member.conversationId]?.isActive == true &&
                     teamExecutionGate.isAdmitted(member.conversationId),
-                lastMessage = lastMessage?.let(::previewText),
+                lastMessage = lastMessage?.let(::messageText),
             )
         }
     }
@@ -283,15 +284,7 @@ class AgentTeamService(
         )
     }
 
-    private fun previewText(message: UIMessage): String? {
-        val text = message.parts
-            .filterIsInstance<UIMessagePart.Text>()
-            .joinToString("\n") { it.text }
-            .trim()
-        return text.takeIf { it.isNotEmpty() }?.take(LAST_MESSAGE_PREVIEW_CHARS)
-    }
-
-    private companion object {
-        const val LAST_MESSAGE_PREVIEW_CHARS = 400
-    }
+    private fun messageText(message: UIMessage): String? = fullTeamReplyText(
+        message.parts.asSequence().filterIsInstance<UIMessagePart.Text>().map { it.text }
+    )
 }
