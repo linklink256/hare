@@ -196,34 +196,40 @@ class AgentTeamService(
         )
     }.distinctUntilChanged()
 
-    /** UI list observes only roster/title/status. Tool listAgents returns full latest-message text. */
+    /** Drawer list observes only roster/title/status, without subscribing to the elapsed-time ticker. */
     fun observeMemberList(teamId: Uuid): Flow<List<TeamMemberListItem>> = combine(
         teamRepository.observeMembers(teamId),
         conversationRepository.observeTitlesOfTeam(teamId),
         chatService.getConversationJobs(),
         teamExecutionGate.admittedConversations,
-        teamExecutionGate.runTimings,
-    ) { members, titles, jobs, admitted, timings ->
-        val rows = members.map { member ->
+    ) { members, titles, jobs, admitted ->
+        members.map { member ->
             TeamMemberListItem(
                 member = member,
                 running = jobs[member.conversationId]?.isActive == true && member.conversationId in admitted,
                 title = titles[member.conversationId].orEmpty(),
-                elapsedMillis = member.lastRunElapsedMillis,
             )
         }
-        rows to timings.filterKeys { id -> members.any { it.conversationId == id } }
+    }.distinctUntilChanged()
+
+    /** Only the agent-team panel opts in to persisted/live task durations. */
+    fun observeTimedMemberList(teamId: Uuid): Flow<List<TeamMemberListItem>> = combine(
+        observeMemberList(teamId),
+        teamExecutionGate.runTimings,
+    ) { rows, timings ->
+        rows to timings.filterKeys { id -> rows.any { it.member.conversationId == id } }
     }.transformLatest { (rows, timings) ->
         fun currentRows(): List<TeamMemberListItem> {
             val now = System.nanoTime()
             return rows.map { row ->
-                timings[row.member.conversationId]?.let { timing ->
-                    row.copy(elapsedMillis = timing.elapsedMillisAt(now))
-                } ?: row
+                row.copy(
+                    elapsedMillis = timings[row.member.conversationId]?.elapsedMillisAt(now)
+                        ?: row.member.lastRunElapsedMillis,
+                )
             }
         }
         emit(currentRows())
-        // This flow is collected only while the sheet/drawer is visible; no global ticker or DB polling.
+        // Collected only while the panel is visible; the conversation drawer never starts this ticker.
         while (timings.values.any { it.running }) {
             delay(1000)
             emit(currentRows())

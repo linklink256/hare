@@ -155,7 +155,7 @@ class ChatVM(
             }
             combine(
                 agentTeamService.observeLeaderConversation(team),
-                agentTeamService.observeMemberList(team.id),
+                agentTeamService.observeTimedMemberList(team.id),
                 agentTeamRepository.observeTasks(team.id),
             ) { leader, members, tasks -> AgentTeamPanelState(team, leader, members, tasks) }
                 .collect { _agentTeamPanel.value = it }
