@@ -77,6 +77,7 @@ val appModule = module {
             appScope = get(),
             lazyChatService = lazy { get() },
             settingsStore = get(),
+            lazyAgentTeamRepository = lazy { get() },
         )
     }
 
