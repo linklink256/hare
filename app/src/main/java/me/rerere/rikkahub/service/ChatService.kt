@@ -667,25 +667,9 @@ class ChatService(
                     session.update { it.upsertMessage(replyNodeId, message) }
                     session.replyMessageId.value = message.id
                 },
-                onAutoCheckpoint = { prefix, checkpoint ->
-                    // 只提交仍与请求相符的已完成历史；不改正在生成的消息及其工具状态。
-                    session.update { latest ->
-                        val anchor = latest.messageNodes.indexOfFirst { it.currentMessage.id == prefix.last().id }
-                        check(anchor >= 0) { "自动压缩期间对话分支已变化" }
-                        val actual = latest.currentMessages.take(anchor + 1).limitContext(0)
-                        check(actual == prefix.limitContext(0)) { "自动压缩期间消息已编辑，请重试" }
-                        check(latest.currentMessages.take(anchor + 1).lastOrNull { it.isContextCheckpoint }?.id ==
-                            prefix.lastOrNull { it.isContextCheckpoint }?.id) { "自动压缩期间检查点已变化" }
-                        latest.copy(
-                            messageNodes = latest.messageNodes.take(anchor + 1) +
-                                checkpoint.toMessageNode() + latest.messageNodes.drop(anchor + 1),
-                            chatSuggestions = emptyList(),
-                        )
-                    }
-                    session.flush()
-                },
             )
             var finishReason: AgentFinishReason? = null
+            var completedMessage: UIMessage? = null
             try {
                 runAgent(request, hooks).flowOn(Dispatchers.IO).collect { event ->
                     when (event) {
@@ -709,6 +693,7 @@ class ChatService(
                         is AgentEvent.Finished -> {
                             Log.i(TAG, "runTurn: finished (${event.reason})")
                             finishReason = event.reason
+                            completedMessage = event.message
                         }
                     }
                 }
@@ -730,6 +715,48 @@ class ChatService(
             }
 
             val reason = checkNotNull(finishReason)
+            if (reason is AgentFinishReason.Completed) {
+                val finalMessage = checkNotNull(completedMessage)
+                val finalHistory = if (history.lastOrNull()?.id == finalMessage.id) {
+                    history.dropLast(1) + finalMessage
+                } else {
+                    history + finalMessage
+                }
+                try {
+                    requestFactory.compressAfterTask(
+                        turn = turn,
+                        messages = finalHistory,
+                        completed = true,
+                        processingStatus = session.processingStatus,
+                        onAutoCheckpoint = { prefix, checkpoint ->
+                            // 只提交仍与本轮分支相符的历史；保留最新任务回复，不修改工具状态。
+                            session.update { latest ->
+                                val anchor = latest.messageNodes.indexOfFirst { it.currentMessage.id == prefix.last().id }
+                                check(anchor >= 0) { "自动压缩期间对话分支已变化" }
+                                val actual = latest.currentMessages.take(anchor + 1).limitContext(0)
+                                check(actual == prefix.limitContext(0)) { "自动压缩期间消息已编辑，请重试" }
+                                check(latest.currentMessages.take(anchor + 1).lastOrNull { it.isContextCheckpoint }?.id ==
+                                    prefix.lastOrNull { it.isContextCheckpoint }?.id) { "自动压缩期间检查点已变化" }
+                                latest.copy(
+                                    messageNodes = latest.messageNodes.take(anchor + 1) +
+                                        checkpoint.toMessageNode() + latest.messageNodes.drop(anchor + 1),
+                                    chatSuggestions = emptyList(),
+                                )
+                            }
+                            session.flush()
+                        },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // The task and its answer are already complete; compression is maintenance, not failure.
+                    addError(
+                        IllegalStateException("任务已完成，但自动压缩失败；原记录和任务结果均已保留。", e),
+                        conversationId,
+                        title = "自动压缩失败",
+                    )
+                }
+            }
             // 等待审批时这一轮还没结束，标题、建议和记忆整理等审批之后再做
             if (reason !is AgentFinishReason.AwaitingApproval) {
                 sessionManager.launchWithSession(conversationId) { generateTitle(conversationId) }

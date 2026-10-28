@@ -51,7 +51,7 @@ fun SettingAutoCompressionPage() {
                     checked = settings.autoCompressionEnabled,
                     onCheckedChange = { enabled -> vm.updateSettings { it.copy(autoCompressionEnabled = enabled) } },
                     headlineContent = { Text("自动压缩") },
-                    supportingContent = { Text("默认开启，适用于领队与队友。在发送消息及工具循环的下一次模型请求前检查。") },
+                    supportingContent = { Text("默认开启，适用于领队与队友。任务中达到阈值只标记，等本轮模型和工具调用全部正常完成后再检查并压缩；等待审批、达到步数上限、失败或取消时不压缩。") },
                 )
                 formItem(
                     headlineContent = { Text("触发比例（%）") },
@@ -67,7 +67,7 @@ fun SettingAutoCompressionPage() {
                 }
                 formItem(
                     headlineContent = { Text("保留最近消息数") },
-                    supportingContent = { Text("1–100，默认 6；不拆分同一条消息中的工具调用。历史不足时适当减少保留数，正在生成的消息始终保留。") },
+                    supportingContent = { Text("1–100，默认 6；不拆分同一条消息中的工具调用。历史不足时适当减少保留数，最新任务回复始终保留。") },
                 ) {
                     OutlinedNumberInput(
                         value = settings.autoCompressionKeepRecent,
@@ -78,7 +78,7 @@ fun SettingAutoCompressionPage() {
                     )
                 }
             }
-            Text("使用当前会话模型生成摘要，会产生一次额外请求与费用。原始记录仍可查看、复制及导出；只有发给模型的历史改用摘要。压缩失败会停止本次生成并提示，可重试或手动压缩。单条过大的消息、附件或尚未完成的工具调用无法靠历史压缩解决。")
+            Text("使用当前会话模型生成摘要，会产生一次额外请求与费用。原始记录仍可查看、复制及导出；只有发给模型的历史改用摘要。压缩失败仅提示，不影响已经完成的任务和回复；可稍后手动压缩。任务中不会自动压缩，若继续执行超过模型硬性窗口，仍可能请求失败。单条过大的消息、附件或尚未完成的工具调用无法靠历史压缩解决。")
         }
     }
 }

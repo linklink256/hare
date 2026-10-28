@@ -69,7 +69,9 @@ class ChatTurnContext(
     val workspaceCwd: String?,
     val memories: List<MemoryFile>,
     val tools: List<Tool>,
-)
+) {
+    internal val deferredCompression = DeferredTaskCompression()
+}
 
 /** 把会话变成发给模型的请求：系统提示词、上下文裁剪、输入输出转换都在这里 */
 class ChatRequestFactory(
@@ -131,7 +133,6 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
-        onAutoCheckpoint: (suspend (List<UIMessage>, UIMessage) -> Unit)? = null,
         onStreamInterrupted: suspend (UIMessage) -> Unit = {},
     ): Pair<AgentRequest, AgentHooks> {
         val request = AgentRequest(
@@ -145,45 +146,17 @@ class ChatRequestFactory(
             stream = turn.assistant.streamOutput,
             retry = turn.settings.retryPolicy(),
         )
-        val compressionState = AutoCompressionState()
         val hooks = object : AgentHooks {
             override suspend fun interruptedStep(message: UIMessage) = onStreamInterrupted(message)
 
             override suspend fun prepareStep(messages: List<UIMessage>): StepRequest {
                 Log.i(TAG, "prepareStep: ${turn.model.id}")
-                val effective = compressionState.apply(messages)
-                val step = buildStep(turn, effective, processingStatus)
-                if (!turn.settings.autoCompressionEnabled || onAutoCheckpoint == null) return step
-                val end = automaticCompressionEnd(
-                    messages = effective,
-                    requestMessages = step.messages,
-                    modelContext = turn.model.contextLength,
-                    thresholdPercent = turn.settings.autoCompressionThresholdPercent,
-                    keepRecent = turn.settings.autoCompressionKeepRecent,
-                    outputReserve = turn.assistant.maxTokens ?: 4096,
-                ) ?: return step
-                processingStatus.value = "正在自动压缩上下文…"
-                try {
-                    val prefix = effective.take(end)
-                    val summary = generateCompressionSummary(
-                        turn = turn,
-                        messages = prefix,
-                        compressPrompt = buildCompressPrompt(
-                            additionalPrompt = "保留用户目标、约束、关键事实、文件路径、已完成事项和待办；不要继续执行任务。",
-                            locale = Locale.getDefault().displayName,
-                        ),
-                    )
-                    val checkpoint = UIMessage.user(summary).copy(isContextCheckpoint = true)
-                    onAutoCheckpoint(prefix, checkpoint)
-                    compressionState.remember(prefix.last().id, checkpoint)
-                    return buildStep(turn, compressionState.apply(messages), processingStatus)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    throw IllegalStateException("自动压缩失败，原记录未删除；请重试或调整压缩设置。", e)
-                } finally {
-                    processingStatus.value = null
+                val step = buildStep(turn, messages, processingStatus)
+                if (turn.settings.autoCompressionEnabled) {
+                    turn.deferredCompression.observeThreshold(compressionEnd(turn, messages, step.messages) != null)
                 }
+                // Never summarize or replace history while this task is still executing.
+                return step
             }
 
             override suspend fun previewStep(message: UIMessage, newPartsFrom: Int) =
@@ -200,6 +173,56 @@ class ChatRequestFactory(
         }
         return request to hooks
     }
+
+    /** Recheck the final task context and compress only after normal completion, never before a step. */
+    suspend fun compressAfterTask(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        completed: Boolean,
+        processingStatus: MutableStateFlow<String?>,
+        onAutoCheckpoint: suspend (List<UIMessage>, UIMessage) -> Unit,
+    ) {
+        if (!turn.settings.autoCompressionEnabled) return
+        var end: Int? = null
+        try {
+            turn.deferredCompression.afterTask(
+                completed = completed,
+                finalThresholdReached = {
+                    val step = buildStep(turn, messages, processingStatus)
+                    end = compressionEnd(turn, messages, step.messages)
+                    end != null
+                },
+                compress = {
+                    val prefix = messages.take(checkNotNull(end))
+                    processingStatus.value = "任务已完成，正在自动压缩上下文…"
+                    val summary = generateCompressionSummary(
+                        turn = turn,
+                        messages = prefix,
+                        compressPrompt = buildCompressPrompt(
+                            additionalPrompt = "保留用户目标、约束、关键事实、文件路径、已完成事项和待办；不要继续执行任务。",
+                            locale = Locale.getDefault().displayName,
+                        ),
+                    )
+                    onAutoCheckpoint(prefix, UIMessage.user(summary).copy(isContextCheckpoint = true))
+                },
+            )
+        } finally {
+            processingStatus.value = null
+        }
+    }
+
+    private fun compressionEnd(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        requestMessages: List<UIMessage>,
+    ): Int? = automaticCompressionEnd(
+        messages = messages,
+        requestMessages = requestMessages,
+        modelContext = turn.model.contextLength,
+        thresholdPercent = turn.settings.autoCompressionThresholdPercent,
+        keepRecent = turn.settings.autoCompressionKeepRecent,
+        outputReserve = turn.assistant.maxTokens ?: 4096,
+    )
 
     /**
      * 生成压缩摘要。
