@@ -58,12 +58,16 @@ fun ColumnScope.AgentTeamConversationList(
     onBack: () -> Unit,
     onClick: (Uuid) -> Unit,
     modifier: Modifier = Modifier,
+    header: (@Composable () -> Unit)? = null,
 ) {
     LazyColumn(
         state = listState,
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (header != null) {
+            item(key = "drawer_header", contentType = "drawer_header") { header() }
+        }
         item(key = "agent_team_header", contentType = "header") {
             Row(
                 modifier = Modifier
@@ -96,13 +100,10 @@ fun ColumnScope.AgentTeamConversationList(
             }
         }
 
+        item(key = "agent_team_leader_label", contentType = "section") {
+            ConversationSectionHeader(label = stringResource(R.string.agent_team_leader))
+        }
         item(key = "agent_team_leader", contentType = "leader") {
-            Text(
-                text = stringResource(R.string.agent_team_leader),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
             AgentTeamConversationItem(
                 title = leader.title.ifBlank { stringResource(R.string.agent_team_leader) },
                 running = leader.running,
@@ -111,12 +112,7 @@ fun ColumnScope.AgentTeamConversationList(
             )
         }
         item(key = "agent_team_members_label", contentType = "section") {
-            Text(
-                text = stringResource(R.string.agent_team_members),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+            ConversationSectionHeader(label = stringResource(R.string.agent_team_members))
         }
 
         if (members.isEmpty()) {

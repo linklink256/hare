@@ -161,7 +161,7 @@ fun ColumnScope.ConversationList(
         ) { index ->
             when (val item = conversations[index]) {
                 is ConversationListItem.DateHeader -> {
-                    DateHeaderItem(
+                    ConversationSectionHeader(
                         label = item.label,
                         modifier = Modifier.animateItem()
                     )
@@ -199,7 +199,7 @@ fun ColumnScope.ConversationList(
 }
 
 @Composable
-private fun DateHeaderItem(
+internal fun ConversationSectionHeader(
     label: String,
     modifier: Modifier = Modifier
 ) {

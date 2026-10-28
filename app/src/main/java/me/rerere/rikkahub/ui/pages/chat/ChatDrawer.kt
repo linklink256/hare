@@ -264,8 +264,7 @@ fun ChatDrawerContent(
 
             DrawerActions(navController = navController)
 
-            // 进入团队视图时不显示文件夹/排序栏（那是会话列表的控件）
-            if (teamView == null) {
+            // 主列表和团队视图共用文件夹栏；选择文件夹时沿用 selectFolder 返回主列表。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -283,21 +282,23 @@ fun ChatDrawerContent(
                     modifier = Modifier.weight(1f),
                 )
 
-                ConversationSortButton(
-                    sortOrder = settings.displaySetting.conversationSortOrder,
-                    onSortOrderChange = { sortOrder ->
-                        vm.updateSettings {
-                            it.copy(
-                                displaySetting = it.displaySetting.copy(
-                                    conversationSortOrder = sortOrder
+                // 排序只适用于主会话列表，不给固定的团队名册显示无效排序控件。
+                if (teamView == null) {
+                    ConversationSortButton(
+                        sortOrder = settings.displaySetting.conversationSortOrder,
+                        onSortOrderChange = { sortOrder ->
+                            vm.updateSettings {
+                                it.copy(
+                                    displaySetting = it.displaySetting.copy(
+                                        conversationSortOrder = sortOrder
+                                    )
                                 )
-                            )
-                        }
-                        // 换排序后回到顶部，否则会停留在原来滚动到的位置
-                        scope.launch { conversationListState.scrollToItem(0) }
-                    },
-                )
-            }
+                            }
+                            // 换排序后回到顶部，否则会停留在原来滚动到的位置
+                            scope.launch { conversationListState.scrollToItem(0) }
+                        },
+                    )
+                }
             }
         }
     }
@@ -363,6 +364,7 @@ fun ChatDrawerContent(
                     listState = conversationListState,
                     onBack = { drawerVm.closeTeam() },
                     onClick = { navigateToChatPage(navController, it) },
+                    header = if (scrollableHeader) drawerHeader else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
