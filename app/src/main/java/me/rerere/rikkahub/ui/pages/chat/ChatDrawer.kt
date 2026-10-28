@@ -357,6 +357,7 @@ fun ChatDrawerContent(
                 // 团队视图：只列出该 Lead 的队友会话
                 AgentTeamConversationList(
                     title = activeTeam.title,
+                    leader = activeTeam.leader,
                     members = activeTeam.members,
                     selectedConversationId = current.id,
                     listState = conversationListState,

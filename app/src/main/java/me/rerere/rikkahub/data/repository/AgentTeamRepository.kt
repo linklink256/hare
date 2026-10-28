@@ -47,6 +47,13 @@ class AgentTeamRepository(
     suspend fun getTeamByLeadConversation(conversationId: Uuid): AgentTeam? =
         agentTeamDAO.getTeamByLeadConversation(conversationId.toString())?.toModel()
 
+    /** UI navigation only: membership lookup never grants access to leader tools. */
+    suspend fun getTeamForConversation(conversationId: Uuid): AgentTeam? {
+        val member = getMemberByConversation(conversationId)
+        // Membership wins over legacy nested teams; an orphan must not resolve to another team.
+        return if (member != null) getTeam(member.teamId) else getTeamByLeadConversation(conversationId)
+    }
+
     fun observeTeams(): Flow<List<AgentTeam>> =
         agentTeamDAO.listTeams().map { list -> list.map { it.toModel() } }
 

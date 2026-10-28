@@ -21,12 +21,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.uuid.Uuid
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.AgentTeam
+import me.rerere.rikkahub.data.model.TeamLeaderListItem
+import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.data.model.TeamTask
 import me.rerere.rikkahub.data.model.TeamTaskStatus
-import me.rerere.rikkahub.data.model.TeamMemberListItem
-import kotlin.uuid.Uuid
 
 /**
  * 团队面板要展示的全部内容。
@@ -34,6 +35,7 @@ import kotlin.uuid.Uuid
  */
 data class AgentTeamPanelState(
     val team: AgentTeam,
+    val leader: TeamLeaderListItem,
     val members: List<TeamMemberListItem>,
     val tasks: List<TeamTask>,
 )
@@ -69,6 +71,13 @@ fun AgentTeamSheet(
             if (state == null) {
                 Hint(stringResource(R.string.agent_team_empty))
             } else {
+                SectionTitle(stringResource(R.string.agent_team_leader))
+                ConversationRow(
+                    title = state.leader.title.ifBlank { stringResource(R.string.agent_team_leader) },
+                    running = state.leader.running,
+                    onClick = { onOpenConversation(state.leader.conversationId) },
+                )
+
                 SectionTitle(stringResource(R.string.agent_team_members))
                 if (state.members.isEmpty()) {
                     Hint(stringResource(R.string.agent_team_empty))
@@ -115,8 +124,17 @@ private fun MemberRow(
     view: TeamMemberListItem,
     onOpenConversation: (Uuid) -> Unit,
 ) {
-    Surface(
+    ConversationRow(
+        title = view.displayTitle,
+        running = view.running,
         onClick = { onOpenConversation(view.member.conversationId) },
+    )
+}
+
+@Composable
+private fun ConversationRow(title: String, running: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.fillMaxWidth(),
@@ -125,9 +143,9 @@ private fun MemberRow(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusDot(running = view.running)
+            StatusDot(running = running)
             Text(
-                text = view.displayTitle,
+                text = title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,

@@ -505,7 +505,9 @@ private fun ChatPageContent(
             state = agentTeamPanel,
             onOpenConversation = { conversationId ->
                 showAgentTeam = false
-                navigateToChatPage(navController, chatId = conversationId)
+                if (conversationId != conversation.id) {
+                    navigateToChatPage(navController, chatId = conversationId)
+                }
             },
             onDismiss = { showAgentTeam = false },
         )

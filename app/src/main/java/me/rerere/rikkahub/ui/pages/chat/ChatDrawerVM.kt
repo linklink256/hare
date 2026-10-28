@@ -34,6 +34,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Folder
+import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.data.repository.AgentTeamConversationIndex
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
@@ -48,6 +49,7 @@ import me.rerere.rikkahub.utils.toLocalString
 data class DrawerTeamView(
     val leadConversationId: Uuid,
     val title: String,
+    val leader: TeamLeaderListItem,
     val members: List<TeamMemberListItem>,
 )
 
@@ -191,20 +193,22 @@ class ChatDrawerVM(
     }
 
     private suspend fun loadTeamView(leadConversationId: Uuid) {
-        val team = agentTeamRepository.getTeamByLeadConversation(leadConversationId)
+        val team = agentTeamRepository.getTeamForConversation(leadConversationId)
         if (team == null) {
             _teamView.value = null
             return
         }
-        val title = conversationRepo.getTitleById(leadConversationId)
-            ?.takeIf { it.isNotBlank() } ?: context.getString(R.string.agent_team_title)
-        agentTeamService.observeMemberList(team.id).collect { members ->
-            _teamView.value = DrawerTeamView(
-                leadConversationId = leadConversationId,
-                title = title,
+        combine(
+            agentTeamService.observeLeaderConversation(team),
+            agentTeamService.observeMemberList(team.id),
+        ) { leader, members ->
+            DrawerTeamView(
+                leadConversationId = team.leadConversationId,
+                title = leader.title.ifBlank { context.getString(R.string.agent_team_title) },
+                leader = leader,
                 members = members,
             )
-        }
+        }.collect { _teamView.value = it }
     }
 
     fun createFolder(name: String) {

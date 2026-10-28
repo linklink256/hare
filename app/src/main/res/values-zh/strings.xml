@@ -1789,6 +1789,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="agent_team_title">智能体团队</string>
     <string name="agent_team_setting">作为领队组建团队</string>
     <string name="agent_team_setting_desc">开启后该助手可作为领队：创建队友、在共享任务板派活并协调推进。队友各自在自己的会话里干活，可随时点进去查看。</string>
+    <string name="agent_team_leader">领队</string>
     <string name="agent_team_members">成员</string>
     <string name="agent_team_tasks">任务</string>
     <string name="agent_team_empty">还没有队友。让助手组建一支队伍。</string>

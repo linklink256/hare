@@ -68,6 +68,9 @@ class ConversationRepository(
 
     suspend fun getTitleById(id: Uuid): String? = conversationDAO.getTitleById(id.toString())
 
+    fun observeTitleById(id: Uuid): Flow<String?> =
+        conversationDAO.observeTitleById(id.toString()).distinctUntilChanged()
+
     fun observeTitlesOfTeam(teamId: Uuid): Flow<Map<Uuid, String>> =
         conversationDAO.observeTitlesOfTeam(teamId.toString())
             .map { rows -> rows.associate { Uuid.parse(it.conversationId) to it.title } }

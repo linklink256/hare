@@ -25,6 +25,9 @@ interface ConversationDAO {
     @Query("SELECT title FROM conversationentity WHERE id = :id")
     suspend fun getTitleById(id: String): String?
 
+    @Query("SELECT title FROM conversationentity WHERE id = :id")
+    fun observeTitleById(id: String): Flow<String?>
+
     @Query("SELECT m.conversation_id AS conversationId, COALESCE(c.title, '') AS title FROM agent_team_members m LEFT JOIN conversationentity c ON c.id = m.conversation_id WHERE m.team_id = :teamId")
     fun observeTitlesOfTeam(teamId: String): Flow<List<ConversationTitle>>
 

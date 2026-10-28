@@ -1787,6 +1787,7 @@
     <string name="agent_team_title">Agent Team</string>
     <string name="agent_team_setting">Lead a team (Agent Team)</string>
     <string name="agent_team_setting_desc">Let this assistant lead a team: create teammates, assign tasks on a shared board and coordinate them. Teammates work in their own conversations.</string>
+    <string name="agent_team_leader">Leader</string>
     <string name="agent_team_members">Members</string>
     <string name="agent_team_tasks">Tasks</string>
     <string name="agent_team_empty">No teammates yet. Ask the assistant to build a team.</string>

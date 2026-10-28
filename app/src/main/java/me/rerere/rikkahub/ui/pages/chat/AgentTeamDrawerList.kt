@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.ui.theme.extendColors
 import kotlin.uuid.Uuid
@@ -48,6 +49,7 @@ import kotlin.uuid.Uuid
 @Composable
 fun ColumnScope.AgentTeamConversationList(
     title: String,
+    leader: TeamLeaderListItem,
     members: List<TeamMemberListItem>,
     /** 当前打开的会话：用于和会话列表一致的高亮 */
     selectedConversationId: Uuid?,
@@ -93,6 +95,29 @@ fun ColumnScope.AgentTeamConversationList(
             }
         }
 
+        item(key = "agent_team_leader", contentType = "leader") {
+            Text(
+                text = stringResource(R.string.agent_team_leader),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            AgentTeamConversationItem(
+                title = leader.title.ifBlank { stringResource(R.string.agent_team_leader) },
+                running = leader.running,
+                selected = leader.conversationId == selectedConversationId,
+                onClick = { onClick(leader.conversationId) },
+            )
+        }
+        item(key = "agent_team_members_label", contentType = "section") {
+            Text(
+                text = stringResource(R.string.agent_team_members),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+        }
+
         if (members.isEmpty()) {
             item(key = "agent_team_empty") {
                 Surface(
@@ -113,8 +138,9 @@ fun ColumnScope.AgentTeamConversationList(
         }
 
         items(members, key = { it.member.id.toString() }) { view ->
-            AgentTeamMemberItem(
-                view = view,
+            AgentTeamConversationItem(
+                title = view.displayTitle,
+                running = view.running,
                 selected = view.member.conversationId == selectedConversationId,
                 onClick = { onClick(view.member.conversationId) },
                 modifier = Modifier.animateItem(),
@@ -124,8 +150,9 @@ fun ColumnScope.AgentTeamConversationList(
 }
 
 @Composable
-private fun AgentTeamMemberItem(
-    view: TeamMemberListItem,
+private fun AgentTeamConversationItem(
+    title: String,
+    running: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -147,13 +174,13 @@ private fun AgentTeamMemberItem(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = view.displayTitle,
+                text = title,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
 
-            AnimatedVisibility(view.running) {
+            AnimatedVisibility(running) {
                 Box(
                     modifier = Modifier
                         .clip(CircleShape)

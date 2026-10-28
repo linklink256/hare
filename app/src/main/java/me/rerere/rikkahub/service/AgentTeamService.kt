@@ -15,6 +15,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.AgentTeamRules
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMember
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.data.model.TeamMemberStatus
@@ -180,6 +181,17 @@ class AgentTeamService(
         sendToConversation(member.conversationId, text)
         TeamSendOutcome.Sent(member, isRunning(member.conversationId))
     }
+
+    fun observeLeaderConversation(team: AgentTeam): Flow<TeamLeaderListItem> = combine(
+        conversationRepository.observeTitleById(team.leadConversationId),
+        chatService.getConversationJobs(),
+    ) { title, jobs ->
+        TeamLeaderListItem(
+            conversationId = team.leadConversationId,
+            title = title.orEmpty(),
+            running = jobs[team.leadConversationId]?.isActive == true,
+        )
+    }.distinctUntilChanged()
 
     /** UI list observes only roster/title/status. Tool listAgents keeps its message previews. */
     fun observeMemberList(teamId: Uuid): Flow<List<TeamMemberListItem>> = combine(

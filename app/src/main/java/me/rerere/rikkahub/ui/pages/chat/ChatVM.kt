@@ -140,22 +140,24 @@ class ChatVM(
     private val _agentTeamPanel = MutableStateFlow<AgentTeamPanelState?>(null)
     private var agentTeamObservation: Job? = null
 
-    /** 当前会话作为 Lead 的团队面板数据；没建队时为 null */
+    /** 当前领队或成员所属团队；不属于任何团队时为 null。 */
     val agentTeamPanel: StateFlow<AgentTeamPanelState?> = _agentTeamPanel.asStateFlow()
 
     /** 面板打开期间观察名册、标题和任务板；关闭后取消订阅。 */
     fun refreshAgentTeam() {
         agentTeamObservation?.cancel()
+        _agentTeamPanel.value = null
         agentTeamObservation = viewModelScope.launch {
-            val team = agentTeamRepository.getTeamByLeadConversation(_conversationId)
+            val team = agentTeamRepository.getTeamForConversation(_conversationId)
             if (team == null) {
                 _agentTeamPanel.value = null
                 return@launch
             }
             combine(
+                agentTeamService.observeLeaderConversation(team),
                 agentTeamService.observeMemberList(team.id),
                 agentTeamRepository.observeTasks(team.id),
-            ) { members, tasks -> AgentTeamPanelState(team, members, tasks) }
+            ) { leader, members, tasks -> AgentTeamPanelState(team, leader, members, tasks) }
                 .collect { _agentTeamPanel.value = it }
         }
     }
