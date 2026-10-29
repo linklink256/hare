@@ -31,10 +31,10 @@ import kotlin.uuid.Uuid
 class ConversationRowHeightTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun ordinaryAndTeamRowsShare48DpBaseline() {
+    @Test fun ordinaryAndTeamRowsShare36DpBaseline() {
         showPair(fontScale = 1f)
-        compose.onNodeWithTag("plain").assertHeightIsEqualTo(48.dp)
-        compose.onNodeWithTag("team").assertHeightIsEqualTo(48.dp)
+        compose.onNodeWithTag("plain").assertHeightIsEqualTo(36.dp)
+        compose.onNodeWithTag("team").assertHeightIsEqualTo(36.dp)
     }
 
     @Test fun accessibilityTextGrowsBothRowsEqually() {

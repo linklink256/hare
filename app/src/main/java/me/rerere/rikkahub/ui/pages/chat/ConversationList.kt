@@ -246,7 +246,7 @@ private fun PinnedHeader(
     }
 }
 
-internal val ConversationListRowMinHeight = 48.dp
+internal val ConversationListRowMinHeight = 36.dp
 
 @Composable
 internal fun ConversationItem(
@@ -326,12 +326,13 @@ internal fun ConversationItem(
 
             // 团队入口：进入该 Lead 会话的队友列表
             if (isTeamLead) {
-                // Keep the visual button inside the shared 48dp row, without its own
-                // minimum-layout padding. Compose still expands touch bounds to 48dp.
+                // Keep the visual button inside the shared compact 36dp row, without its own
+                // minimum-layout padding. This only opts this one button out of the minimum
+                // layout size; the default pointer touch expansion is left enabled (not disabled).
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                     IconButton(
                         onClick = { onOpenTeam(conversation) },
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             imageVector = HugeIcons.ArrowRight01,
