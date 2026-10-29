@@ -317,6 +317,14 @@ dependencies {
     implementation(libs.jlatexmath.font.greek)
     implementation(libs.jlatexmath.font.cyrillic)
 
+    // BetterText (markdown / text / highlight / latex)
+    // https://github.com/re-ovo/bettertext
+    implementation(platform(libs.bettertext.bom))
+    implementation(libs.bettertext.text)
+    implementation(libs.bettertext.markdown)
+    implementation(libs.bettertext.latex)
+    implementation(libs.bettertext.highlight)
+
     // mcp
     implementation(libs.modelcontextprotocol.kotlin.sdk)
 
