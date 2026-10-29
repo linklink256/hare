@@ -4,6 +4,11 @@ package me.rerere.rikkahub.data.model
 data class TeamRunTiming(
     val startedAtNanos: Long,
     val finishedElapsedMillis: Long? = null,
+    /**
+     * 这一轮刚结束时是否还有工具在等审批；null 表示当时没能采样（会话已回收/未加载）。
+     * 只为跨会话回收维持分组，不代表成功与否。
+     */
+    val awaitingApprovalAtFinish: Boolean? = null,
 ) {
     val running: Boolean get() = finishedElapsedMillis == null
 

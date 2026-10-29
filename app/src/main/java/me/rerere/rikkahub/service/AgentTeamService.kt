@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -202,12 +203,26 @@ class AgentTeamService(
         conversationRepository.observeTitlesOfTeam(teamId),
         chatService.getConversationJobs(),
         teamExecutionGate.admittedConversations,
-    ) { members, titles, jobs, admitted ->
+        // 两个轻量集合合成一路：错误只看 conversationId，审批只取已完成轮次的标量快照；
+        // 都不含每秒变化的 elapsed，抽屉不会因此重启 ticker。
+        combine(
+            chatService.errors.map { errors -> errors.mapNotNull { it.conversationId }.toSet() }.distinctUntilChanged(),
+            teamExecutionGate.finishedApprovalSnapshots,
+        ) { errorConversationIds, finishedApproval -> errorConversationIds to finishedApproval },
+    ) { members, titles, jobs, admitted, (errorConversationIds, finishedApproval) ->
         members.map { member ->
+            val hasActiveJob = jobs[member.conversationId]?.isActive == true
             TeamMemberListItem(
                 member = member,
-                running = jobs[member.conversationId]?.isActive == true && member.conversationId in admitted,
+                running = hasActiveJob && member.conversationId in admitted,
                 title = titles[member.conversationId].orEmpty(),
+                hasActiveJob = hasActiveJob,
+                // 优先读已缓存会话的实时审批状态；会话已被空闲回收时，
+                // 退回该成员上一轮完成瞬间的标量快照（新任务会盖掉它）。
+                // 两者都没有就是未知，保持 null，绝不为了分组去拉历史。
+                awaitingApproval = chatService.peekAwaitingApproval(member.conversationId)
+                    ?: finishedApproval[member.conversationId],
+                hasError = member.conversationId in errorConversationIds,
             )
         }
     }.distinctUntilChanged()

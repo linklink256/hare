@@ -6,6 +6,12 @@ data class TeamMemberListItem(
     val running: Boolean,
     val title: String,
     val elapsedMillis: Long? = null,
+    /** 该队友会话当前有生成任务（含排队等并发名额、尚未获准的那种） */
+    val hasActiveJob: Boolean = running,
+    /** 是否有工具调用在等用户审批；null 表示会话未缓存/未加载，即未知 */
+    val awaitingApproval: Boolean? = null,
+    /** ChatService 里该会话是否还有没清掉的错误 */
+    val hasError: Boolean = false,
 ) {
     val displayTitle: String get() = title.takeIf { it.isNotBlank() } ?: member.name
 }

@@ -268,7 +268,9 @@ fun ChatDrawerContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
+                    .padding(horizontal = 4.dp)
+                    // 与主列表的排序按钮同高：团队视图没有该按钮，行高只由 FolderChip 决定，需统一抬到 48dp 触摸高度。
+                    .heightIn(min = 48.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {

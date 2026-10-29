@@ -24,18 +24,25 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMemberListItem
@@ -60,6 +67,12 @@ fun ColumnScope.AgentTeamConversationList(
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
 ) {
+    val sections = groupTeamMembers(members)
+    val activeMembers = sections.running + sections.queued + sections.pending
+    // 以团队为 key：换队/成员增减/秒计时变化都不会把用户展开的状态重置
+    val sectionKey = leader.conversationId.toString()
+    var showFinished by rememberSaveable(sectionKey) { mutableStateOf(false) }
+
     LazyColumn(
         state = listState,
         modifier = modifier,
@@ -134,7 +147,9 @@ fun ColumnScope.AgentTeamConversationList(
             }
         }
 
-        items(members, key = { it.member.id.toString() }) { view ->
+        // 顺序由共享纯分组决定：运行中 → 等待并发 → 其他待处理/未知；同组保持原 created_at 顺序。
+        // 已结束的只默认收起显示，不删除、不重复：展开后仍逐条渲染。
+        items(activeMembers, key = { it.member.id.toString() }) { view ->
             AgentTeamConversationItem(
                 title = view.displayTitle,
                 running = view.running,
@@ -143,6 +158,68 @@ fun ColumnScope.AgentTeamConversationList(
                 modifier = Modifier.animateItem(),
             )
         }
+
+        if (sections.finished.isNotEmpty()) {
+            item(key = "agent_team_finished_header", contentType = "section") {
+                FinishedSectionHeader(
+                    count = sections.finished.size,
+                    expanded = showFinished,
+                    onToggle = { showFinished = !showFinished },
+                )
+            }
+            if (showFinished) {
+                items(sections.finished, key = { it.member.id.toString() }) { view ->
+                    AgentTeamConversationItem(
+                        title = view.displayTitle,
+                        running = view.running,
+                        selected = view.member.conversationId == selectedConversationId,
+                        onClick = { onClick(view.member.conversationId) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 已结束分组的分隔头：显示数量，点一下展开/收起。
+ * 只收起展示，不影响其他分组，也不改成员本身的状态。
+ */
+@Composable
+private fun FinishedSectionHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val toggleLabel = stringResource(
+        if (expanded) R.string.code_block_collapse else R.string.code_block_expand
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(
+                onClickLabel = toggleLabel,
+                role = Role.Button,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.agent_team_finished) + " · " + count,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
+            contentDescription = toggleLabel,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

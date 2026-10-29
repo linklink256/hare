@@ -156,6 +156,12 @@ class ChatService(
         onSessionRemoved = memoryConsolidationScheduler::onConversationLeft,
     )
 
+    init {
+        // 让 gate 能在一轮真正结束时采样一次审批状态（只读、不建会话），
+        // 这样队友会话被空闲回收后分组仍稳定；任务结束时无 UI 观察也照常记录。
+        teamExecutionGate.approvalSampler = { conversationId -> peekAwaitingApproval(conversationId) }
+    }
+
     // 错误状态
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
     val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
@@ -231,6 +237,15 @@ class ChatService(
         sessionManager.getGenerationStartedAtFlow(conversationId)
 
     fun getConversationJobs(): Flow<Map<Uuid, Job?>> = sessionManager.getConversationJobs()
+
+    /**
+     * 只读试探：已缓存且已加载的会话当前是否有工具调用在等审批。
+     * null 表示会话未缓存/未加载（未知）——绝不为查询而创建会话或加载历史。
+     */
+    fun peekAwaitingApproval(conversationId: Uuid): Boolean? =
+        sessionManager.get(conversationId)
+            ?.takeIf { it.isInitialized }
+            ?.state?.value?.isAwaitingToolApproval
 
     private fun launchGenerationJob(
         conversationId: Uuid,

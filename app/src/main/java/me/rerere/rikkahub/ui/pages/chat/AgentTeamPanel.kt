@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,18 +12,27 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.uuid.Uuid
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowDown01
+import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.AgentTeam
 import me.rerere.rikkahub.data.model.TeamLeaderListItem
@@ -52,6 +63,10 @@ fun AgentTeamSheet(
     onOpenConversation: (Uuid) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 以团队为 key：换团队/成员增减/耗时秒计时变化都不会重置展开状态；state 为空时 key 稳定
+    val teamKey = state?.team?.id?.toString().orEmpty()
+    var showFinished by rememberSaveable(teamKey) { mutableStateOf(false) }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -82,8 +97,23 @@ fun AgentTeamSheet(
                 if (state.members.isEmpty()) {
                     Hint(stringResource(R.string.agent_team_empty))
                 } else {
-                    state.members.forEach { view ->
+                    // 与抽屉共用同一套纯分组：运行中 → 等待并发 → 其他待处理/未知 → 已结束
+                    val sections = groupTeamMembers(state.members)
+                    (sections.running + sections.queued + sections.pending).forEach { view ->
                         MemberRow(view = view, onOpenConversation = onOpenConversation)
+                    }
+                    if (sections.finished.isNotEmpty()) {
+                        FinishedSectionHeader(
+                            count = sections.finished.size,
+                            expanded = showFinished,
+                            onToggle = { showFinished = !showFinished },
+                        )
+                        // 收起时不组装这些行；展开才逐条渲染
+                        if (showFinished) {
+                            sections.finished.forEach { view ->
+                                MemberRow(view = view, onOpenConversation = onOpenConversation)
+                            }
+                        }
                     }
                 }
 
@@ -117,6 +147,40 @@ private fun Hint(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** 已结束分组的分隔头：数量 + 展开/收起箭头，与抽屉同口径。 */
+@Composable
+private fun FinishedSectionHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val toggleLabel = stringResource(
+        if (expanded) R.string.code_block_collapse else R.string.code_block_expand
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(onClickLabel = toggleLabel, role = Role.Button, onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.agent_team_finished) + " · " + count,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
+            contentDescription = toggleLabel,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 @Composable
