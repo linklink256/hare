@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.finishReasoning
 import me.rerere.rikkahub.data.model.Conversation
 import java.time.Instant
@@ -202,7 +203,13 @@ class ConversationSession(
         update { current ->
             current.copy(
                 messageNodes = current.messageNodes.map { node ->
-                    node.copy(messages = node.messages.map { it.finishReasoning() })
+                    val updatedMessages = node.messages.map { it.finishReasoning() }
+                    // 只替换真的补了时间的节点，未改的（含未物化压缩行）保留原引用
+                    if (updatedMessages.indices.any { updatedMessages[it] !== node.messages[it] }) {
+                        node.copy(messages = updatedMessages)
+                    } else {
+                        node
+                    }
                 },
                 updateAt = Instant.now(),
             )
@@ -224,6 +231,14 @@ class ConversationSession(
     // 最近一轮正在写的助手消息，这一轮还没有输出时为空。重新生成较早的消息时它不在会话末尾，
     // 生成期间那个节点还可能被切到别的分支，只能按 id 找
     val replyMessageId = MutableStateFlow<Uuid?>(null)
+
+    // 本轮正在写的助手节点 id；只在「新开一条助手消息」的轮次设置，续写/重新生成时为 null（那两种轮次不插节点）
+    @Volatile
+    var replyNodeId: Uuid? = null
+
+    // 本轮插进对话的队友通知，供自动压缩的 expected 使用；每轮开始时清空。
+    // 写方在 synchronized(session) 内、读方在生成协程，用并发安全的列表避免可见性问题
+    val turnNotices = java.util.concurrent.CopyOnWriteArrayList<UIMessage>()
 
     // 最近一次生成任务开始的时间，用来认出这一轮报的错。在任务启动前同步记下，任务里报的错不会早于它
     val generationStartedAt = MutableStateFlow<Long?>(null)
