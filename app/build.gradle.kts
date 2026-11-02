@@ -24,7 +24,7 @@ android {
         applicationId = "me.rerere.rikkahub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 203
+        versionCode = 225
         versionName = "3.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -76,7 +76,7 @@ android {
     buildTypes {
         release {
             // Personal TB373FU release: separate identity from upstream and the existing debug install.
-            applicationIdSuffix = ".tablet"
+            applicationIdSuffix = ".fork.hare"
             isDebuggable = false
             signingConfig = if (providers.gradleProperty("tabletUnsigned").orNull == "true") null else signingConfigs.getByName("release")
             optimization {
