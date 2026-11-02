@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -79,13 +80,22 @@ fun ProviderQuotaText(
 
     val result = rememberProviderQuota(providerSetting)
     val quota = result?.getOrNull()
+    val context = LocalContext.current
     val text = when {
         result == null -> "~"
         quota == null -> "Error: ${result.exceptionOrNull()?.message}"
         else -> when (quota) {
             is ProviderQuota.Balance -> quota.value
             is ProviderQuota.UsageLimits -> quota.windows.joinToString(" · ") { window ->
-                "${window.shortLabel()} ${window.usedPercent.roundToInt()}%".trim()
+                val percent = if (window.displayAsRemaining) {
+                    context.getString(
+                        R.string.setting_provider_page_usage_remaining,
+                        (100 - window.usedPercent).roundToInt(),
+                    )
+                } else {
+                    "${window.usedPercent.roundToInt()}%"
+                }
+                "${window.shortLabel()} $percent".trim()
             }
         }
     }
