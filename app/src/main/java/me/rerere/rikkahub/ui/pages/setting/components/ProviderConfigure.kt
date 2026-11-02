@@ -478,6 +478,12 @@ private fun AccountUsage(provider: ProviderSetting.Account) {
 
             else -> limits.windows.forEach { window ->
                 val reached = limits.limitReached || window.usedPercent >= 100
+                // 订阅类默认按剩余展示：显示 100 - usedPercent，进度条也按剩余填充
+                val shownPercent = if (window.displayAsRemaining) {
+                    100.0 - window.usedPercent
+                } else {
+                    window.usedPercent
+                }
                 formItem(
                     headlineContent = { Text(window.longLabel()) },
                     supportingContent = window.resetsAt?.let { resetsAt ->
@@ -488,14 +494,21 @@ private fun AccountUsage(provider: ProviderSetting.Account) {
                     },
                     trailingContent = {
                         Text(
-                            text = "${window.usedPercent.roundToInt()}%",
+                            text = if (window.displayAsRemaining) {
+                                stringResource(
+                                    R.string.setting_provider_page_usage_remaining,
+                                    shownPercent.roundToInt(),
+                                )
+                            } else {
+                                "${shownPercent.roundToInt()}%"
+                            },
                             style = MaterialTheme.typography.titleMediumEmphasized,
                             color = if (reached) MaterialTheme.colorScheme.error else Color.Unspecified,
                         )
                     },
                 ) {
                     LinearWavyProgressIndicator(
-                        progress = { (window.usedPercent / 100).toFloat().coerceIn(0f, 1f) },
+                        progress = { (shownPercent / 100).toFloat().coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth(),
                         color = if (reached) MaterialTheme.colorScheme.error else ProgressIndicatorDefaults.linearColor,
                     )

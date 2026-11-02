@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.datastore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import me.rerere.ai.core.ReasoningLevel
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.utils.JsonInstant
 import kotlin.reflect.KProperty1
 import kotlin.uuid.Uuid
@@ -52,6 +53,21 @@ private inline fun <reified T> json(
     set,
     encode = { JsonInstant.encodeToString(it) },
     decode = { JsonInstant.decodeFromString<T>(it) },
+)
+
+/**
+ * 只给 providers 列表用的容错解码：正常数据仍走原路径，个别认不出的条目跳过（见 [ProviderDecodeTolerance]）。
+ */
+private fun providers(
+    key: Preferences.Key<String>,
+    property: KProperty1<Settings, List<ProviderSetting>>,
+    set: Settings.(List<ProviderSetting>) -> Settings,
+) = SettingsField(
+    key,
+    property,
+    set,
+    encode = { JsonInstant.encodeToString(it) },
+    decode = { ProviderDecodeTolerance.decodeProviders(it) },
 )
 
 private fun uuid(
@@ -114,7 +130,7 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         plain(OCR_PROMPT, Settings::ocrPrompt) { copy(ocrPrompt = it) },
 
         // 提供商
-        json(PROVIDERS, Settings::providers) { copy(providers = it) },
+        providers(PROVIDERS, Settings::providers) { copy(providers = it) },
 
         // 助手
         uuid(SELECT_ASSISTANT, Settings::assistantId) { copy(assistantId = it) },
@@ -184,7 +200,6 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         ),
         plain(AUTO_COMPRESSION_ENABLED, Settings::autoCompressionEnabled) { copy(autoCompressionEnabled = it) },
         plain(AUTO_COMPRESSION_THRESHOLD_PERCENT, Settings::autoCompressionThresholdPercent) { copy(autoCompressionThresholdPercent = it) },
-        plain(AUTO_COMPRESSION_KEEP_RECENT, Settings::autoCompressionKeepRecent) { copy(autoCompressionKeepRecent = it) },
         plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
         plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },
         plain(AGENT_TEAM_WAIT_TIMEOUT, Settings::agentTeamWaitTimeoutSeconds) { copy(agentTeamWaitTimeoutSeconds = it) },
