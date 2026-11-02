@@ -4,6 +4,7 @@ import android.content.Context
 import me.rerere.ai.core.Tool
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.tts.provider.TTSManager
 
 class LocalTools(
@@ -11,6 +12,7 @@ class LocalTools(
     private val eventBus: AppEventBus,
     private val ttsManager: TTSManager,
     private val settingsStore: SettingsStore,
+    private val workspaceRepository: WorkspaceRepository,
 ) {
     val javascriptTool by lazy { buildJavascriptTool() }
 
@@ -30,7 +32,7 @@ class LocalTools(
 
     val chartDisplayTool by lazy { buildChartDisplayTool() }
 
-    fun getTools(options: List<LocalToolOption>): List<Tool> {
+    fun getTools(options: List<LocalToolOption>, workspaceId: String? = null): List<Tool> {
         val tools = mutableListOf<Tool>()
         if (options.contains(LocalToolOption.JavascriptEngine)) {
             tools.add(javascriptTool)
@@ -56,6 +58,9 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.ChartDisplay)) {
             tools.add(chartDisplayTool)
+        }
+        if (options.contains(LocalToolOption.Hscreen)) {
+            tools.add(buildHscreenTool(workspaceRepository, context, workspaceId))
         }
         return tools
     }
