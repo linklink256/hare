@@ -29,11 +29,9 @@ class SettingsFieldsTest {
         val old = mutablePreferencesOf(
             androidx.datastore.preferences.core.intPreferencesKey("auto_compression_threshold") to 32000,
             SettingsStore.AUTO_COMPRESSION_ENABLED to false,
-            SettingsStore.AUTO_COMPRESSION_KEEP_RECENT to 12,
         ).toSettings()
         assertEquals(75, old.autoCompressionThresholdPercent)
         assertFalse(old.autoCompressionEnabled)
-        assertEquals(12, old.autoCompressionKeepRecent)
     }
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -64,6 +62,8 @@ class SettingsFieldsTest {
         val stored = mutablePreferencesOf().apply { putSettings(SAMPLE) }.asMap().mapKeys { it.key.name }
 
         assertEquals(STORED_KEYS, stored.keys)
+        // 只有 auto_compression_keep_recent 按「不要旧模式」的裁决不再写出；读取历史值仍被忽略（见 PostTurnSettingsTest）。
+        assertFalse(stored.containsKey("auto_compression_keep_recent"))
         assertEquals(false, stored["dynamic_color"])
         assertEquals(9090, stored["web_server_port"])
         assertEquals(1.5f, stored["default_tts_playback_speed"])
@@ -179,7 +179,6 @@ private val SAMPLE = Settings(
     sponsorAlertDismissedAt = 7,
     autoCompressionEnabled = false,
     autoCompressionThresholdPercent = 60,
-    autoCompressionKeepRecent = 12,
     agentTeamModelId = id(31),
     agentTeamMaxMembers = 12,
     agentTeamMaxTasks = 300,
@@ -239,7 +238,6 @@ private val STORED_KEYS = setOf(
     "sponsor_alert_dismissed_at",
     "auto_compression_enabled",
     "auto_compression_threshold_percent",
-    "auto_compression_keep_recent",
     "agent_team_model",
     "agent_team_max_members",
     "agent_team_max_tasks",
