@@ -247,6 +247,12 @@ private fun AssistantLocalToolContent(
                 title = R.string.assistant_page_local_tools_chart_display_title,
                 description = R.string.assistant_page_local_tools_chart_display_desc,
             )
+            toolItem(
+                option = LocalToolOption.Hscreen,
+                icon = HugeIcons.SmartPhone01,
+                title = R.string.assistant_page_local_tools_hscreen_title,
+                description = R.string.assistant_page_local_tools_hscreen_desc,
+            )
         }
     }
 }
