@@ -19,6 +19,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.prompts.buildMemoryPrompt
+import me.rerere.rikkahub.data.ai.prompts.resolveChatSystemPrompt
 import me.rerere.rikkahub.data.ai.prompts.buildCompressPrompt
 import java.util.Locale
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
@@ -43,8 +44,10 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MemoryFile
+import me.rerere.rikkahub.data.model.TeamMember
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
@@ -69,6 +72,8 @@ class ChatTurnContext(
     val workspaceCwd: String?,
     val memories: List<MemoryFile>,
     val tools: List<Tool>,
+    /** 本会话是团队成员（子代理）会话时，对应名册记录；普通与领队会话为 null */
+    val teamMember: TeamMember? = null,
 ) {
     internal val deferredCompression = DeferredTaskCompression()
 }
@@ -80,6 +85,7 @@ class ChatRequestFactory(
     private val usageRecorder: UsageRecorder,
     private val chatToolFactory: ChatToolFactory,
     private val memoryRepository: MemoryRepository,
+    private val agentTeamRepository: AgentTeamRepository,
     templateTransformer: TemplateTransformer,
     workspaceRepository: WorkspaceRepository,
 ) {
@@ -122,6 +128,8 @@ class ChatRequestFactory(
                 conversationId = conversation.id,
                 workspaceCwd = conversation.workspaceCwd,
             ),
+            // 按名册记录判定成员身份，不依赖团队开关、标题或工具是否存在；旧成员后续轮同样覆盖
+            teamMember = agentTeamRepository.getMemberByConversation(conversation.id),
         )
     }
 
@@ -153,7 +161,8 @@ class ChatRequestFactory(
                 Log.i(TAG, "prepareStep: ${turn.model.id}")
                 val step = buildStep(turn, messages, processingStatus)
                 if (turn.settings.autoCompressionEnabled) {
-                    turn.deferredCompression.observeThreshold(compressionEnd(turn, messages, step.messages) != null)
+                    // 生成中只观察阈值，不规划覆盖范围：覆盖到哪里要等任务正常完成后决定
+                    turn.deferredCompression.observeThreshold(thresholdReachedForTurn(turn, messages, step))
                 }
                 // Never summarize or replace history while this task is still executing.
                 return step
@@ -180,6 +189,8 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
         completed: Boolean,
         processingStatus: MutableStateFlow<String?>,
+        // 覆盖范围规划完成后、付摘要请求之前的一致性校验（编辑/换分支时早失败，不白花一次请求）
+        verifySource: suspend (prefix: List<UIMessage>) -> Unit = {},
         onAutoCheckpoint: suspend (List<UIMessage>, UIMessage) -> Unit,
     ) {
         if (!turn.settings.autoCompressionEnabled) return
@@ -189,21 +200,55 @@ class ChatRequestFactory(
                 completed = completed,
                 finalThresholdReached = {
                     val step = buildStep(turn, messages, processingStatus)
-                    end = compressionEnd(turn, messages, step.messages)
+                    end = compressionEnd(turn, messages, step)
                     end != null
                 },
                 compress = {
                     val prefix = messages.take(checkNotNull(end))
+                    // 先确认来源仍是本轮那个分支与内容，再花一次摘要请求
+                    verifySource(prefix)
                     processingStatus.value = "任务已完成，正在自动压缩上下文…"
-                    val summary = generateCompressionSummary(
-                        turn = turn,
-                        messages = prefix,
-                        compressPrompt = buildCompressPrompt(
-                            additionalPrompt = "保留用户目标、约束、关键事实、文件路径、已完成事项和待办；不要继续执行任务。",
-                            locale = Locale.getDefault().displayName,
-                        ),
+                    val compressPrompt = buildCompressPrompt(
+                        additionalPrompt = compressionAdditionalPrompt(),
+                        locale = Locale.getDefault().displayName,
                     )
-                    onAutoCheckpoint(prefix, UIMessage.user(summary).copy(isContextCheckpoint = true))
+                    // 预算可行性、摘要输出预算与生成后长度验收都在 generateCompressionSummary 内部
+                    // 按装配后的实际输入计算一次，避免重复读/重复转换
+                    val compression = try {
+                        generateCompressionSummary(
+                            turn = turn,
+                            messages = prefix,
+                            // 要覆盖到最终答复，摘要输入不能被普通条数限制再裁一次
+                            applyContextLimit = false,
+                            compressPrompt = compressPrompt,
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 分层压缩仍失败时不阻塞会话：退化为确定性检查点，说明裁剪范围与近期摘录
+                        Log.w(TAG, "compression summary unavailable, falling back to a trimmed checkpoint", e)
+                        fallbackCompression(prefix, e.message)
+                    }
+                    val summary = compression.summary
+                    val fixedTokens = compression.fixedTokens
+                    val quotes = preservedUserQuotes(
+                        messages = prefix,
+                        budgetTokens = preservedUserQuoteBudgetTokens(turn.model.contextLength),
+                    )
+                    val checkpointText = buildCheckpointText(summary, quotes)
+                    val replacement = estimateContextTokens(
+                        listOf(UIMessage.user(checkpointText).copy(isContextCheckpoint = true))
+                    )
+                    val budget = automaticCompressionBudget(
+                        modelContext = turn.model.contextLength,
+                        thresholdPercent = turn.settings.autoCompressionThresholdPercent,
+                        outputReserve = turn.assistant.maxTokens ?: 4096,
+                    )
+                    // 摘要过长、压缩后仍贴着触发线时不安装检查点：原文和旧检查点都保留
+                    check(compressionFitsBudget(fixedTokens, replacement, budget)) {
+                        "压缩后的上下文没有明显下降（估算 ${fixedTokens + replacement} / 触发线 $budget），本次不保存摘要"
+                    }
+                    onAutoCheckpoint(prefix, UIMessage.user(checkpointText).copy(isContextCheckpoint = true))
                 },
             )
         } finally {
@@ -211,17 +256,44 @@ class ChatRequestFactory(
         }
     }
 
+    /**
+     * 自动压缩给模型的附加要求；七节结构和失败/取消/待办状态要求由 [buildCompressPrompt] 统一提供。
+     *
+     * “本轮已正常完成”只在这里出现：只有自动压缩的 Completed 路径会走到它，
+     * 手动压缩（compressConversation）传的是用户自己的附加说明，不会继承这个前提。
+     */
+    private fun compressionAdditionalPrompt(): String =
+        "本次自动压缩的前提：上一回合已经正常结束（Completed）。记录累计仍有效的已决事项、关键证据（路径/命令/数值）和未授权的待办；" +
+            "不要把已完成的事写成需要再执行一遍的指令，也不要重复执行任何工具。最近用户消息的原话会单独附在摘要后，不要逐字复制。"
+
+    /**
+     * 阈值观察与覆盖规划共用同一组参数；观察只看是否越线，规划在任务完成后才调用。
+     * 两者都按装配后的实际请求计量，并带上这一步的工具定义估算（工具不占消息，但占上下文）。
+     */
+    private fun thresholdReachedForTurn(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        step: StepRequest,
+    ): Boolean = compressionThresholdReached(
+        messages = messages,
+        requestMessages = step.messages,
+        modelContext = turn.model.contextLength,
+        thresholdPercent = turn.settings.autoCompressionThresholdPercent,
+        outputReserve = turn.assistant.maxTokens ?: 4096,
+        toolTokens = estimateToolTokens(step.params.tools),
+    )
+
     private fun compressionEnd(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
-        requestMessages: List<UIMessage>,
-    ): Int? = automaticCompressionEnd(
+        step: StepRequest,
+    ): Int? = completedTurnCompressionEnd(
         messages = messages,
-        requestMessages = requestMessages,
+        requestMessages = step.messages,
         modelContext = turn.model.contextLength,
         thresholdPercent = turn.settings.autoCompressionThresholdPercent,
-        keepRecent = turn.settings.autoCompressionKeepRecent,
         outputReserve = turn.assistant.maxTokens ?: 4096,
+        toolTokens = estimateToolTokens(step.params.tools),
     )
 
     /**
@@ -230,13 +302,45 @@ class ChatRequestFactory(
      * 请求按正常对话组装（系统提示词、工具定义、参数和 sessionId 都相同），只在末尾追加压缩指令，
      * 前缀与上一轮对话一致，可以命中提示词缓存，模型也能看到工具调用和结果。
      * 工具定义必须保留：它属于请求前缀，去掉或改动 tool_choice 都会让缓存失效。
+     *
+     * 返回 internal 的 [CompressionSummaryResult]，public API 不能暴露 internal 类型，所以本函数为 internal；
+     * 调用方（自动压缩与手动压缩）都在 app 模块内。
      */
-    suspend fun generateCompressionSummary(
+    internal suspend fun generateCompressionSummary(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         compressPrompt: String,
-    ): String {
-        val (requestMessages, params) = buildStep(turn, messages)
+        applyContextLimit: Boolean = true,
+    ): CompressionSummaryResult {
+        // 1) 原样装得下就一次摘要，能命中提示词缓存
+        summarizeOnce(turn, messages, compressPrompt, applyContextLimit)?.let { return it }
+        // 2) 装不下先剪枝：工具输出头尾、推理只留开头、附件换占位符
+        val pruned = pruneForCompression(messages)
+        if (pruned != messages) {
+            summarizeOnce(turn, pruned, compressPrompt, applyContextLimit)?.let { return it }
+        }
+        // 3) 仍装不下就分块摘要，再把分段摘要合并（map-reduce）
+        return summarizeInChunks(turn, pruned, compressPrompt)
+    }
+
+    /** 单次摘要；预算装不下返回 null，由上一层升级处理。 */
+    private suspend fun summarizeOnce(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        compressPrompt: String,
+        applyContextLimit: Boolean = true,
+    ): CompressionSummaryResult? {
+        // 装配完成后的实际输入：转换器已经跑过，条数限制按 applyContextLimit 决定
+        val (requestMessages, params) = buildStep(turn, messages, applyContextLimit = applyContextLimit)
+        val toolsTokens = estimateToolTokens(params.tools)
+        val requestTokens = estimateContextTokens(requestMessages) + toolsTokens
+        // 装不下就直接升级到下一层，削覆盖或发注定失败的请求都不做
+        val summaryBudget = compressionSummaryBudget(
+            modelContext = turn.model.contextLength,
+            fixedTokens = requestTokens,
+            coveredTokens = 0,
+            instructionTokens = estimateTextTokens(compressPrompt),
+        ) ?: return null
         // 压缩指令不经过输入转换器，模板转换器会把其中的花括号当成模板语法
         val result = withRetry(
             policy = turn.settings.retryPolicy(),
@@ -248,13 +352,76 @@ class ChatRequestFactory(
             ).generateText(
                 providerSetting = turn.providerSetting,
                 messages = requestMessages + UIMessage.user(compressPrompt),
-                // 助手的输出上限是给聊天回复定的，结构化摘要写不完会被截断；max_tokens 不属于请求前缀，改了不影响缓存
-                params = params.copy(maxTokens = null),
+                // 摘要用自己的输出预算：不继承聊天的输出上限（结构化摘要会被截断），也不再用 null 无界输出；
+                // max_tokens 不属于请求前缀，改了不影响缓存
+                params = params.copy(maxTokens = summaryBudget.toInt()),
             )
+        }
+        // 明确的截断/不完整/安全拒绝状态不保存摘要；null（provider 没给状态）保留兼容，但不据此声称完整
+        check(!isIncompleteFinishReason(result.finishReason)) {
+            "摘要生成未正常结束（finishReason=${result.finishReason}），本次不保存压缩"
         }
         val summary = result.message.compressionSummaryOrNull()
             ?: error(context.getString(R.string.chat_page_compress_tool_call_response))
-        return summary.ifBlank { error("Failed to generate compressed summary") }
+        val summaryText = summary.ifBlank { error("Failed to generate compressed summary") }
+        // provider 没遵守 max_tokens 或没给 finishReason 时，用同一估算口径再做一次长度验收；
+        // 超预算就报维护失败，不截断摘要来“凑”进预算
+        val summaryTokens = estimateTextTokens(summaryText)
+        check(summaryTokens <= summaryBudget) {
+            "摘要超出输出预算（估算 $summaryTokens / $summaryBudget），本次不保存压缩"
+        }
+        // 压缩后仍保留的固定开销（系统规则 + 工具定义），供调用方做触发线下余量检查
+        val fixedTokens = estimateContextTokens(requestMessages.filter { it.isSynthetic }) + toolsTokens
+        return CompressionSummaryResult(
+            summary = summaryText,
+            requestTokens = requestTokens,
+            fixedTokens = fixedTokens,
+            summaryMaxTokens = summaryBudget,
+        )
+    }
+
+    /** 摘要彻底不可用时的兜底：不生成模型内容，只如实说明裁剪范围与最近几条摘录。 */
+    private fun fallbackCompression(
+        messages: List<UIMessage>,
+        reason: String?,
+    ): CompressionSummaryResult = CompressionSummaryResult(
+        summary = fallbackCompactionText(messages, reason),
+        requestTokens = estimateContextTokens(messages),
+        fixedTokens = 0,
+        summaryMaxTokens = 0,
+    )
+
+    /**
+     * 分块摘要：按窗口 55% 切块，逐块生成摘要，再把分段摘要当输入做一次合并。
+     * 合并仍装不下时对分段摘要继续分块，最多三层；全部失败才抛给调用方降级。
+     */
+    private suspend fun summarizeInChunks(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        compressPrompt: String,
+    ): CompressionSummaryResult {
+        val window = turn.model.contextLength.coerceAtLeast(1024).toLong()
+        val chunkTokens = (window * 55 / 100).coerceAtLeast(1024)
+        var level = messages
+        repeat(3) {
+            val chunks = splitForCompression(level, chunkTokens)
+            if (chunks.size > 1) {
+                val partials = chunks.mapNotNull { chunk ->
+                    summarizeOnce(turn, chunk, compressPrompt, applyContextLimit = false)?.summary
+                }
+                if (partials.isNotEmpty()) {
+                    val merged = partials.mapIndexed { index, text ->
+                        UIMessage.user("Part ${index + 1} of ${partials.size}:\n" + text)
+                    }
+                    val mergePrompt = compressPrompt +
+                        "\n\n以上是同一段历史的分段摘要。请把它们合并成一份完整摘要，" +
+                        "保留七节结构、去掉重复，不要遗漏任何分段的要点。"
+                    summarizeOnce(turn, merged, mergePrompt, applyContextLimit = false)?.let { return it }
+                    level = merged
+                }
+            }
+        }
+        error("分块摘要未能合并进模型窗口（窗口 ${turn.model.contextLength}）")
     }
 
     /** 一步请求实际发出的消息和参数；正常对话和压缩共用，二者的请求前缀必须一致才能命中提示词缓存 */
@@ -262,16 +429,17 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
+        applyContextLimit: Boolean = true,
     ): StepRequest {
         val assistant = turn.assistant
         val requestMessages = buildList {
             val system = buildString {
-                val effectiveSystemPrompt =
-                    if (assistant.allowConversationSystemPrompt && !turn.conversationSystemPrompt.isNullOrBlank()) {
-                        turn.conversationSystemPrompt
-                    } else {
-                        assistant.systemPrompt
-                    }
+                // 团队成员用独立提示词；普通与领队会话仍按 allowConversationSystemPrompt 选择
+                val effectiveSystemPrompt = resolveChatSystemPrompt(
+                    assistant = assistant,
+                    conversationSystemPrompt = turn.conversationSystemPrompt,
+                    teamMember = turn.teamMember,
+                )
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
                 }
@@ -290,7 +458,8 @@ class ChatRequestFactory(
             if (system.isNotBlank()) {
                 add(UIMessage.system(prompt = system).copy(isSynthetic = true))
             }
-            addAll(messages.limitContext(assistant.contextMessageLimit))
+            // limitContext(0) 表示不限制；压缩时按覆盖范围原样读入
+            addAll(messages.limitContext(if (applyContextLimit) assistant.contextMessageLimit else 0))
         }.transforms(
             transformers = inputTransformers,
             context = context,
