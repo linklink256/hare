@@ -76,6 +76,8 @@ fun ColumnScope.ChatMessageActionButtons(
     onOpenActionSheet: () -> Unit,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
     onClearTranslation: (UIMessage) -> Unit = {},
+    // 生成中不显示时间：此时 finishedAt 还只是上一步的结束时间，不是这一轮真正的完成时间
+    loading: Boolean = false,
 ) {
     val context = LocalContext.current
     val settings = LocalSettings.current
@@ -174,13 +176,22 @@ fun ColumnScope.ChatMessageActionButtons(
         )
 
         if (settings.displaySetting.showDateTimeInMessage) {
-            Text(
-                text = message.createdAt.toJavaLocalDateTime().toMessageTimeString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                maxLines = 1,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
+            // 只显示完成时间：助手消息取 finishedAt（多步时即最后一步结束），用户消息没有完成时间用创建时间
+            val timeText = when {
+                message.role == MessageRole.USER ->
+                    message.createdAt.toJavaLocalDateTime().toMessageTimeString()
+                loading -> null
+                else -> message.finishedAt?.toJavaLocalDateTime()?.toMessageTimeString()
+            }
+            if (timeText != null) {
+                Text(
+                    text = timeText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
         }
     }
 
@@ -339,7 +350,11 @@ fun ChatMessageActionsSheet(
             // Message Info
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 ProvideTextStyle(MaterialTheme.typography.labelSmall) {
-                    Text(message.createdAt.toJavaLocalDateTime().toLocalString())
+                    Text(
+                        (if (message.role == MessageRole.USER) message.createdAt else message.finishedAt ?: message.createdAt)
+                            .toJavaLocalDateTime()
+                            .toLocalString()
+                    )
                     if (model != null) {
                         Text(model.displayName)
                     }

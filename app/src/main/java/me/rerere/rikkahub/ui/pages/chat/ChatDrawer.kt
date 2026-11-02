@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -123,10 +124,26 @@ fun ChatDrawerContent(
     val memoryDreaming by drawerVm.memoryDreaming.collectAsStateWithLifecycle()
     val teamView by drawerVm.teamView.collectAsStateWithLifecycle()
     val teamIndex by drawerVm.teamIndex.collectAsStateWithLifecycle()
-    val conversationListState = rememberLazyListState(
-        initialFirstVisibleItemIndex = drawerVm.scrollIndex,
-        initialFirstVisibleItemScrollOffset = drawerVm.scrollOffset,
-    )
+    // 滚动位置按「助手 + 文件夹」分别记忆：换助手/换文件夹各自恢复自己的位置
+    val scrollKey = drawerVm.scrollKey(settings.assistantId, selectedFolderId)
+    val conversationListState = remember(scrollKey) {
+        LazyListState(
+            firstVisibleItemIndex = drawerVm.scrollIndex(scrollKey),
+            firstVisibleItemScrollOffset = drawerVm.scrollOffset(scrollKey),
+        )
+    }
+    // 团队名册单独一份滚动状态：和主列表共用会被夹索引，并把错误位置写回 scrollIndex
+    val teamListState = rememberLazyListState()
+
+    // 主列表已对齐过的会话 id，放在这里使进团队视图再回来时不重复对齐
+    var alignedConversationId by remember { mutableStateOf<Uuid?>(null) }
+
+    // 恢复位置非顶部时优先保留该位置（在保存滚动位置的 effect 之前取值）
+    val restoredScrollPosition = remember {
+        drawerVm.scrollIndex(scrollKey) != 0 || drawerVm.scrollOffset(scrollKey) != 0
+    }
+    // 只对组合时的初始会话生效，切到新会话仍要首次定位
+    val initialConversationId = remember { current.id }
 
     LaunchedEffect(conversationListState) {
         snapshotFlow {
@@ -135,7 +152,7 @@ fun ChatDrawerContent(
         }
             .distinctUntilChanged()
             .collectLatest { (index, offset) ->
-                drawerVm.saveScrollPosition(index, offset)
+                drawerVm.saveScrollPosition(scrollKey, index, offset)
             }
     }
 
@@ -284,23 +301,24 @@ fun ChatDrawerContent(
                     modifier = Modifier.weight(1f),
                 )
 
-                // 排序只适用于主会话列表，不给固定的团队名册显示无效排序控件。
-                if (teamView == null) {
-                    ConversationSortButton(
-                        sortOrder = settings.displaySetting.conversationSortOrder,
-                        onSortOrderChange = { sortOrder ->
-                            vm.updateSettings {
-                                it.copy(
-                                    displaySetting = it.displaySetting.copy(
-                                        conversationSortOrder = sortOrder
-                                    )
+                // 主列表与团队名册共用同一个排序设置
+                ConversationSortButton(
+                    sortOrder = settings.displaySetting.conversationSortOrder,
+                    onSortOrderChange = { sortOrder ->
+                        vm.updateSettings {
+                            it.copy(
+                                displaySetting = it.displaySetting.copy(
+                                    conversationSortOrder = sortOrder
                                 )
-                            }
-                            // 换排序后回到顶部，否则会停留在原来滚动到的位置
-                            scope.launch { conversationListState.scrollToItem(0) }
-                        },
-                    )
-                }
+                            )
+                        }
+                        // 换排序后回到顶部，否则会停留在原来滚动到的位置
+                        scope.launch {
+                            if (teamView == null) conversationListState.scrollToItem(0)
+                            else teamListState.scrollToItem(0)
+                        }
+                    },
+                )
             }
         }
     }
@@ -336,7 +354,7 @@ fun ChatDrawerContent(
                 onDelete = {
                     scope.launch {
                         vm.deleteConversation(it).join()
-                        conversations.refresh()
+                        // 不需要手动 refresh：Room 失效会自动重查，手动 refresh 会丢掉已加载页
                         if (it.id == current.id) {
                             navigateToChatPage(navController)
                         }
@@ -354,7 +372,10 @@ fun ChatDrawerContent(
                     showMoveToFolderSheet = true
                 },
                 teamLeadIds = teamIndex.leadConversationIds,
-                onOpenTeam = { drawerVm.openTeam(it.id) }
+                onOpenTeam = { drawerVm.openTeam(it.id) },
+                alignedConversationId = alignedConversationId,
+                onAlignedToCurrent = { alignedConversationId = it },
+                hasRestoredScrollPosition = current.id == initialConversationId && restoredScrollPosition,
             )
             } else {
                 // 团队视图：只列出该 Lead 的队友会话
@@ -363,7 +384,8 @@ fun ChatDrawerContent(
                     leader = activeTeam.leader,
                     members = activeTeam.members,
                     selectedConversationId = current.id,
-                    listState = conversationListState,
+                    listState = teamListState,
+                    sortOrder = settings.displaySetting.conversationSortOrder,
                     onBack = { drawerVm.closeTeam() },
                     onClick = { navigateToChatPage(navController, it) },
                     header = if (scrollableHeader) drawerHeader else null,
@@ -399,9 +421,8 @@ fun ChatDrawerContent(
                 },
                 modifier = Modifier.fillMaxWidth(),
                 onClickSetting = {
-                    val currentAssistantId = settings.assistantId
-                    navController.navigate(Screen.AssistantDetail(id = currentAssistantId.toString()))
-                }
+                    navController.navigate(Screen.AssistantDetail(settings.assistantId.toString()))
+                },
             )
 
             Row(
@@ -411,21 +432,6 @@ fun ChatDrawerContent(
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
             ) {
-                DrawerAction(
-                    icon = {
-                        Icon(
-                            imageVector = HugeIcons.LookTop,
-                            contentDescription = stringResource(R.string.assistant_page_title)
-                        )
-                    },
-                    label = {
-                        Text(stringResource(R.string.assistant_page_title))
-                    },
-                    onClick = {
-                        navController.navigate(Screen.Assistant)
-                    },
-                )
-
                 Box {
                     DrawerAction(
                         icon = {
@@ -593,7 +599,7 @@ fun ChatDrawerContent(
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(folders) { folder ->
+                    items(folders, key = { it.id }) { folder ->
                         val isCurrent = folder.id == conversationToMoveFolder?.folderId
                         Surface(
                             onClick = { doMove(folder.id) },
@@ -933,7 +939,7 @@ private fun FolderBar(
                 onLongClick = {},
             )
         }
-        items(folders) { folder ->
+        items(folders, key = { it.id }) { folder ->
             var menuExpanded by remember { mutableStateOf(false) }
             Box {
                 FolderChip(

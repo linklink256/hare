@@ -5,13 +5,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
+import dev.chrisbanes.haze.HazeState
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+
+/**
+ * 聊天背景所在的 Haze 状态：背景图铺在导航层之外（RouteActivity），
+ * 由那里提供，页面里的输入框模糊效果与之共享同一份源。
+ */
+val LocalChatHazeState = compositionLocalOf<HazeState?> { null }
 
 @Composable
 fun AssistantBackground(setting: Settings, modifier: Modifier) {

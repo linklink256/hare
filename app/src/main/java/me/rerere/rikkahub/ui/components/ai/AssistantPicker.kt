@@ -39,6 +39,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.ui.hooks.useEditState
+import me.rerere.rikkahub.ui.pages.assistant.AssistantCreationSheet
+import org.koin.compose.koinInject
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Edit03
@@ -62,6 +67,16 @@ fun AssistantPicker(
     val state = rememberAssistantState(settings, onSelectAssistant)
     val defaultAssistantName = stringResource(R.string.assistant_page_default_assistant)
     var showPicker by remember { mutableStateOf(false) }
+    val settingsStore: SettingsStore = koinInject()
+    val pickerScope = rememberCoroutineScope()
+    val createState = useEditState<Assistant> { assistant ->
+        // 原来在助手设置页右上角的「+ 新建助手」，挪到这个助手选择面板里
+        pickerScope.launch {
+            settingsStore.update { it.copy(assistants = it.assistants.plus(assistant)) }
+            // 创建完成后回到选择面板，方便直接改用刚建的助手
+            showPicker = true
+        }
+    }
 
     NavigationDrawerItem(
         icon = {
@@ -79,10 +94,11 @@ fun AssistantPicker(
 
                 Spacer(Modifier.weight(1f))
 
+                // 点头像进入助手详细页；选择面板里另有铅笔 / + 入口
                 UIAvatar(
                     name = state.currentAssistant.name.ifEmpty { defaultAssistantName },
                     value = state.currentAssistant.avatar,
-                    onClick = onClickSetting
+                    onClick = onClickSetting,
                 )
             }
         },
@@ -101,11 +117,14 @@ fun AssistantPicker(
                 showPicker = false
                 state.setSelectAssistant(assistant)
             },
+            onCreateAssistant = { createState.open(Assistant()) },
             onDismiss = {
                 showPicker = false
             }
         )
     }
+
+    AssistantCreationSheet(createState)
 }
 
 @Composable
@@ -113,6 +132,7 @@ private fun AssistantPickerSheet(
     settings: Settings,
     currentAssistant: Assistant,
     onAssistantSelected: (Assistant) -> Unit,
+    onCreateAssistant: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden, enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
@@ -144,11 +164,26 @@ private fun AssistantPickerSheet(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = stringResource(R.string.assistant_page_title),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.assistant_page_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = {
+                        // 先收起选择面板，再打开创建面板（创建状态挂在 AssistantPicker 上，不会被回收）
+                        scope.launch { sheetState.hide() }
+                        onDismiss()
+                        onCreateAssistant()
+                    },
+                ) {
+                    Icon(HugeIcons.Add01, stringResource(R.string.assistant_page_add))
+                }
+            }
 
             // 标签过滤器
             if (settings.assistantTags.isNotEmpty()) {

@@ -20,6 +20,8 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.ui.ImagePreviewDialog
 import me.rerere.rikkahub.ui.modifier.shimmer
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
+import me.rerere.rikkahub.utils.InlineDecodeCapHeight
+import me.rerere.rikkahub.utils.InlineDecodeCapWidth
 import me.rerere.ui.components.LocalExportContext
 
 @Composable
@@ -35,11 +37,20 @@ fun ZoomableAsyncImage(
     val context = LocalContext.current
     val placeholder = if(LocalDarkMode.current) R.drawable.placeholder_dark else R.drawable.placeholder
     val export = LocalExportContext.current
+    // 约束给不出上限（无界）时把解码裁到屏幕量级，避免整张原图常驻成 GL 纹理。
+    // 已由布局约束定好尺寸的图片只做 min，不会被放大。导出保持原图。
+    val displayMetrics = context.resources.displayMetrics
     val coilModel = ImageRequest.Builder(context)
         .data(model)
         .placeholder(placeholder)
         .crossfade(false)
         .allowHardware(!export)
+        .apply {
+            if (!export) {
+                extras[InlineDecodeCapWidth] = displayMetrics.widthPixels
+                extras[InlineDecodeCapHeight] = displayMetrics.heightPixels * 2
+            }
+        }
         .build()
     var loading by remember { mutableStateOf(false) }
     AsyncImage(
