@@ -4,7 +4,7 @@
 **只读**——不可点击展开，不提供输入/发送/附件/语音/模型选择/额外停止控件。
 领队与普通会话输入区不变。
 
-## 实现范围（UI 层 3 文件，未提交）
+## 实现范围（UI 层 3 文件，产品源码已提交 b712e0f5）
 
 基线 `HEAD 211a87a4`（分支 `feat/agent-team`）；产品改动已由源码作者提交为 **`b712e0f5`**（编译输入为该源码提交前的冻结 patch，与提交 diff 逐字节一致），合计 **+118 / -4**：
 
@@ -58,4 +58,24 @@
 
 ## 未执行 / 边界
 
-本轮未 push、未打包安装、未重启或停止 App、未改设备与 DB/设置；仅改 UI 源码 3 文件与本记录（本记录单独提交，产品源码提交见上）。
+上一阶段（本改动落源码时）未 push、未打包安装、未重启或停止 App、未改设备与 DB/设置；仅改 UI 源码 3 文件与本记录（本记录单独提交，产品源码提交见上）。
+
+## 2026-10-28 追加：debug 198 打包与安装（本轮新授权）
+
+- 版本提交 `03652ab4`（`build(debug): bump versionCode to 198`，仅 `app/build.gradle.kts` 197→198 一行，未碰产品源码）；
+  产品胶囊实现仍在 `b712e0f5`。
+- **已实际打包**：builder 在 llink-win 真跑 `:app:assembleGithubDebug`，`BUILD SUCCESSFUL in 1m 48s`、`EXITCODE=0`，
+  日志 `e:` 0 行、`FAILED` 0；产物 `app-github-arm64-v8a-debug.apk`。
+- **已实际安装**：容器原 debug key 本地重签（私钥不出容器），APK SHA256
+  `0a2ad0a0b7ca636878b0fb3d3cc893a448fc150a2391dadbe778a88286cf4a53` / 58,150,970 B，
+  证书 SHA-256 `f44f36d6…`（= 原 debug 证书）；ops 以 `adb install -r` 安装成功（EXIT=0，638 ms），
+  `me.rerere.rikkahub.debug` 197 → **198**、label `debug`，未清数据、未启动前台。
+- tester 独立实物核验（aapt2/apksigner/zipalign/zip 条目级/DEX 字符串/只读 ssh 核对 Win 日志）0 阻断，
+  确认新胶囊实现（含 `chat_team_member_input_capsule`，不含 `chat_team_member_stop_button`/`collapseForTeamMember`）。
+- **仍未验证**：未做真机 UI / 视觉验收（胶囊是否如期渲染、草稿是否不串、缺模型回退、后端派活/审批等均未验），
+  未跑 JVM 全套测试；安装成功 ≠ UI 通过。安装期间**未中断 Tablet**：`me.rerere.rikkahub.tablet` 保持 vc195、
+  PID 15363 三次重查一致、APK 路径与 lastUpdateTime 未变，release vc194 未运行。
+- 数据完整性：以本轮 baseline 同口径对照，settings / DB / WAL / SHM 字节相同、uv34 / 27 表 / 行数一致；
+  该 DB 副本是**只读诊断副本，不是一致性恢复备份**（无跨文件原子性）。细节以 tester 终报为准。
+- 证据：`results/debug198-build-20261028/`、`results/debug198-install-20261028/`（`install-receipt.json`、`baseline.json`、`REPORT.md`）、
+  `results/debug198-verify-20261028/REPORT.md`。
