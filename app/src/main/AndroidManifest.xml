@@ -122,7 +122,8 @@
     <service
       android:name=".service.ChatGenerationForegroundService"
       android:exported="false"
-      android:foregroundServiceType="dataSync" />
+      android:foregroundServiceType="dataSync"
+      android:stopWithTask="false" />
     <service
       android:name=".service.MediaCreationForegroundService"
       android:exported="false"
