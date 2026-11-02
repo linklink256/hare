@@ -74,3 +74,26 @@ git log --oneline <base>..HEAD  # 本轮提交条数与顺序
 git ls-files | grep -E '^(artifacts|results)/'   # 应无输出
 git fsck --no-dangling           # 应无错误
 ```
+
+## 分支策略
+
+`hare/main` 是集成与交付线：所有 `hare-r<versionCode>` 标签只打在它上面，能编译、能交付的只有这条线上的交付点。
+
+12 个内容分支各自负责一类改动，名字固定：
+
+- `hare/git-infra`：`.gitignore`、`docs/HARE-GIT-WORKFLOW.md`、`scripts/git-hooks/`（仓库与提交流程本身）。
+- `hare/brand`：应用身份与发布元数据（包名、versionCode/versionName、各语言 strings、关于页、OAuth 回环、NSD 服务名）。
+- `hare/hscreen`：内置隐幕 CLI 与 native 引擎、本地工具注册。
+- `hare/team`：队友工具、成员提示词、团队侧栏与团队数据层。
+- `hare/multiagent`：AgentRun/邮箱持久层、Run 生命周期、结构化 report_back。
+- `hare/recovery`：stream_chunk 断点恢复与生成中断后的续接。
+- `hare/residency`：分层压缩与 PackedMessageList 按需驻留。
+- `hare/settings`：数据存储字段、提供商配置与解码容错。
+- `hare/conversation`：会话数据层、FTS 与列表项。
+- `hare/ui`：聊天渲染、抽屉、输入区与图片解码上限。
+- `hare/tests`：单元测试（新增与更新）。
+- `hare/docs`：设计与实施记录。
+
+流程：从上一个交付点开 `hare/<主题>` → 只提交该主题的文件 → `--no-ff` 合并回 `hare/main`，让每个主题在图上有独立合并点。
+
+共享文件（`ChatService.kt`、`Settings.kt`、`AppDatabase.kt` 等同时被多个主题改过）**归属单一分支，不按 hunk 拆**：宁可某个分支带一点别主题的改动，也不要为了「纯净」把同一文件切碎。因此内容分支单独 checkout 不保证可编译；可编译、可交付的只有 `hare/main` 的交付点。
