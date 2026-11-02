@@ -18,3 +18,6 @@ local.properties
 *.p12
 /app/app.key
 /app/google-services.json
+
+# 发布成品（APK、idsig、对齐中间产物）不入库，见 docs/HARE-GIT-WORKFLOW.md。
+/artifacts/

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Hare 仓库 pre-commit 钩子：拒绝把发布成品、本地证据、构建目录与签名私钥提交进仓库。
+# 启用方式（仅仓库内配置，不改全局）：git config core.hooksPath scripts/git-hooks
+# 说明：命中第一条即打印原因并退出 1（不依赖 /tmp 临时文件）。
+set -u
+
+LIMIT_BYTES=$((20 * 1024 * 1024))
+
+git rev-parse --git-dir >/dev/null 2>&1 || { echo "pre-commit: 不在 git 仓库内。" >&2; exit 1; }
+
+git diff --cached --name-only -z | {
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      artifacts/* | results/* | local.properties | *.keystore | *.jks | *.p12)
+        echo "pre-commit: 拒绝「$path」：发布成品、本地证据或签名私钥不入库。" >&2
+        exit 1
+        ;;
+    esac
+    case "/$path" in
+      */build/*)
+        echo "pre-commit: 拒绝「$path」：构建目录不入库。" >&2
+        exit 1
+        ;;
+    esac
+    if [ -f "$path" ]; then
+      size=$(wc -c <"$path" 2>/dev/null | tr -d ' ')
+      if [ "${size:-0}" -gt "$LIMIT_BYTES" ]; then
+        echo "pre-commit: 拒绝「$path」：单文件 ${size}B 超过 20MB 上限。" >&2
+        exit 1
+      fi
+    fi
+  done
+  exit 0
+}
