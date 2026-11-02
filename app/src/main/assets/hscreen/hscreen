@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+"""hscreen 0.2.0 - control the HiddenScreen virtual display (llink.hscreen.v1).
+
+Fast path: adb forward tcp:7937 -> localabstract:llink.hscreen.v1, one socket
+round-trip per command. Everything is JSON on stdout; failures exit non-zero
+with a single line on stderr.
+"""
+import json
+import os
+import socket
+import struct
+import re
+import subprocess
+import sys
+import time
+
+VERSION = "0.2.0"
+ADB = os.environ.get("HSCREEN_ADB", "adb")
+SERIAL = os.environ.get("HSCREEN_SERIAL", "127.0.0.1:5555")
+PORT = int(os.environ.get("HSCREEN_PORT", "7937"))
+NSOCK = "llink.hscreen.v1"
+DEV_DIR = "/data/local/tmp/hshs"
+DEV_DEX = DEV_DIR + "/hidden-screen.dex"
+DEV_LOG = DEV_DIR + "/daemon.log"
+LOCAL_DEX = os.environ.get("HSCREEN_DEX", "/workspace/dev/hidden-screen/dist/hidden-screen.dex")
+SHOT_DIR = os.environ.get("HSCREEN_SHOT_DIR", "/workspace/shots")
+# ART flags for the daemon: keep the app_process heap small (rc1 kept ~140MB RSS).
+JVM_ARGS = os.environ.get("HSCREEN_JVM", "-Xmx48m -Xss1m").split()
+# java 引擎（daemon.dex）的 reserve 只接受 1024-4096，保持原值不动。
+DAEMON = "daemon 360 640 160 10 80 1200"
+# native 引擎（m7.1+）：reserve=0 = 不设绝对水位门槛；极低水位由 daemon 侧
+# minAvailableMiB（默认 64，0=关闭）管——只拒命令，不退出、不 release 屏。
+DAEMON_NATIVE = "daemon 360 640 160 10 80 0"
+IDLE_DEFAULT_MIN = 3
+# m7.2：没有 daemon 时，除 up/status/down 外的命令先自动 up 一次再执行；
+# HSCREEN_NO_AUTOSTART=1 关掉（退回旧行为：直接报 no daemon）。
+NO_AUTOSTART = os.environ.get("HSCREEN_NO_AUTOSTART", "").strip().lower() in ("1", "true", "yes", "on")
+# 引擎选择：默认 native（独立 ELF，RSS 约 10-14MB）；java 仍可显式切换（tree/回退）。
+ENGINE = os.environ.get("HSCREEN_ENGINE", "native").strip().lower() or "native"
+if ENGINE not in ("java", "native"):
+    ENGINE = "native"
+DEV_NATIVE = DEV_DIR + "/hscreen-native"
+DEV_NATIVE_LOG = DEV_DIR + "/native.log"
+# 内置部署：CLI 与 ELF 由 App 的资源解到同一目录（/root/bin），所以默认取脚本同目录的
+# hscreen-native；仍可用 HSCREEN_NATIVE 覆盖。开发树里跑也能用（env 指到 native/dist）。
+_HERE = os.path.dirname(os.path.realpath(__file__))
+LOCAL_NATIVE = os.environ.get("HSCREEN_NATIVE") or os.path.join(_HERE, "hscreen-native")
+
+
+class CliError(Exception):
+    pass
+
+
+class DaemonError(CliError):
+    """守护进程明确回了错误帧（不是传输问题）：不要重试、不要重建 forward/重启 daemon。"""
+    pass
+
+
+def adb(args, timeout=30, check=True):
+    """Run adb against the device; return stdout text."""
+    cmd = [ADB, "-s", SERIAL] + args
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise CliError("adb timeout: " + " ".join(args[:2]))
+    except FileNotFoundError:
+        raise CliError("adb not found")
+    out = p.stdout.decode("utf-8", "replace")
+    if check and p.returncode != 0:
+        err = p.stderr.decode("utf-8", "replace").strip() or out.strip()
+        raise CliError("adb %s failed: %s" % (args[0], err.splitlines()[0] if err else p.returncode))
+    return out
+
+
+def shell(cmd, timeout=30, check=True):
+    return adb(["shell", cmd], timeout=timeout, check=check)
+
+
+# ---------------------------------------------------------------- transport
+NO_DAEMON = "no daemon (forward target missing) on tcp:%d - run 'hscreen up'" % PORT
+
+
+class _Closed(Exception):
+    """Peer closed before sending anything: adb forward has no daemon behind it."""
+
+
+class NoDaemon(CliError):
+    """forward 背后确实没有 daemon（区别于超时/断连等业务错误）：只有这种才自动起屏。"""
+
+
+def _recv_exact(s, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = s.recv(n - len(buf))
+        if not chunk:
+            raise CliError("daemon closed the connection without a reply")
+        buf += chunk
+    return buf
+
+
+def send(request, timeout=10.0):
+    """One request/response over the forwarded abstract socket."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(("127.0.0.1", PORT))
+        body = request.encode("ascii")
+        s.sendall(struct.pack(">i", len(body)) + body)
+        first = s.recv(1)
+        if not first:
+            raise _Closed()
+        ok = first[0]
+        size = struct.unpack(">i", _recv_exact(s, 4))[0]
+        if size < 0 or size > 8 * 1024 * 1024:
+            raise CliError("invalid reply size %d" % size)
+        payload = _recv_exact(s, size)
+    except (_Closed, ConnectionRefusedError):
+        raise NoDaemon(NO_DAEMON)
+    except socket.timeout:
+        raise CliError("daemon did not answer within %.0fs on tcp:%d" % (timeout, PORT))
+    except OSError as e:
+        raise CliError("cannot reach daemon via tcp:%d (%s)" % (PORT, e.strerror or e.__class__.__name__))
+    finally:
+        s.close()
+    if not ok:
+        raise DaemonError(payload.decode("utf-8", "replace").strip())
+    return payload
+
+
+def forward_ok():
+    out = adb(["forward", "--list"], check=False)
+    for line in out.splitlines():
+        if ("tcp:%d" % PORT) in line and NSOCK in line:
+            return True
+    return False
+
+
+def ensure_forward():
+    if forward_ok():
+        return False
+    adb(["forward", "tcp:%d" % PORT, "localabstract:" + NSOCK])
+    if not forward_ok():
+        raise CliError("adb forward did not take effect")
+    return True
+
+
+LAST_AUTOSTART = {"started": False, "ms": None}
+
+
+def call(request, timeout=10.0, auto_up=False):
+    """Send a command, rebuilding the forward (and optionally the daemon) if needed.
+
+    只有传输层失败才重试；daemon 回的合法错误帧直接抛给调用方 —— 否则一条业务错误
+    （例如空屏时的 "No frame yet"）会被当成断连，白白 ensure_forward + up + 重发，
+    单次 shot 从 1.2s 变成 9.4s。
+
+    m7.2：auto_up=True 的命令（除 up/status/down）在「forward 背后确实没有 daemon」时
+    先自动执行一次 up 再重发；up 失败原样抛出，不吞。HSCREEN_NO_AUTOSTART=1 时退回旧行为。
+    """
+    try:
+        return send(request, timeout)
+    except DaemonError:
+        raise
+    except NoDaemon:
+        ensure_forward()          # forward 表丢了就重建，再试一次
+        try:
+            return send(request, timeout)
+        except NoDaemon:
+            pass
+        if not auto_up or NO_AUTOSTART:
+            raise
+        up = do_up()              # 幂等：已有 daemon 时 started=False，不重复建屏
+        LAST_AUTOSTART.update(started=bool(up.get("started")), ms=up.get("ms"))
+        return send(request, timeout)
+    except CliError:
+        ensure_forward()
+        return send(request, timeout)
+
+
+# ---------------------------------------------------------------- daemon life
+def local_dex_sha():
+    import hashlib
+    with open(LOCAL_DEX, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def device_dex_sha():
+    out = shell("sha256sum %s 2>/dev/null || true" % DEV_DEX, check=False).strip()
+    return out.split()[0] if out else ""
+
+
+def pid_of_daemon():
+    for line in shell("ps -A -o PID,NAME 2>/dev/null | grep -w hscreen || true", check=False).splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "hscreen":
+            return int(parts[0])
+    return 0
+
+
+def push_dex():
+    shell("mkdir -p %s" % DEV_DIR)
+    tmp = DEV_DIR + "/.dex.new"
+    adb(["push", LOCAL_DEX, tmp], timeout=60)
+    shell("mv -f %s %s" % (tmp, DEV_DEX))  # atomic: never truncate a mapped DEX
+    if device_dex_sha() != local_dex_sha():
+        raise CliError("pushed DEX hash mismatch")
+
+
+def start_daemon():
+    # setsid + </dev/null is mandatory: a plain background start keeps the adb shell open.
+    # CLASSPATH is required: app_process loads the class from it (no dex path argument).
+    # nohup sh -c '<cmd>' wrapper: a bare "cmd &" keeps the adb shell open until the
+    # daemon exits (measured: adb shell never returned), this returns in ~50ms.
+    inner = ("cd %s && CLASSPATH=%s setsid app_process %s /system/bin --nice-name=hscreen "
+             "dev.llink.hscreen.Main %s </dev/null >>%s 2>&1"
+             % (DEV_DIR, DEV_DEX, " ".join(JVM_ARGS), DAEMON, DEV_LOG))
+    outer = "nohup sh -c %s >/dev/null 2>&1 &" % ("'" + inner.replace("'", "'\\''") + "'")
+    shell(outer, timeout=20)
+    deadline = time.time() + 20
+    last = ""
+    while time.time() < deadline:
+        try:
+            return json.loads(send("status", 5.0).decode())
+        except CliError as e:
+            last = str(e)
+            time.sleep(0.3)
+    tail = shell("tail -n 3 %s 2>/dev/null || true" % DEV_LOG, check=False).strip()
+    raise CliError("daemon did not become ready (%s) log: %s" % (last, tail.replace("\n", " | ")))
+
+
+def local_native_sha():
+    import hashlib
+    try:
+        with open(LOCAL_NATIVE, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError as e:
+        # m7.2：自动起屏路径上要给出可读错误，不要抛 traceback
+        raise CliError("local native binary missing: %s (%s)" % (LOCAL_NATIVE, e.strerror))
+
+
+def device_native_sha():
+    out = shell("sha256sum %s 2>/dev/null || true" % DEV_NATIVE, check=False).strip()
+    return out.split()[0] if out else ""
+
+
+def push_native():
+    if not os.path.exists(LOCAL_NATIVE):
+        raise CliError("local native binary missing: " + LOCAL_NATIVE)
+    shell("mkdir -p %s" % DEV_DIR)
+    tmp = DEV_NATIVE + ".new"
+    adb(["push", LOCAL_NATIVE, tmp], timeout=60)
+    shell("chmod 755 %s && mv -f %s %s" % (tmp, tmp, DEV_NATIVE))
+    if device_native_sha() != local_native_sha():
+        raise CliError("pushed native binary hash mismatch")
+
+
+def start_daemon_native():
+    """启动 native 守护进程（与 Java 版同样的 setsid/nohup 规矩，否则 adb shell 不返回）。"""
+    inner = ("cd %s && setsid %s %s </dev/null >>%s 2>&1"
+             % (DEV_DIR, DEV_NATIVE, DAEMON_NATIVE, DEV_NATIVE_LOG))
+    outer = "nohup sh -c %s >/dev/null 2>&1 &" % ("'" + inner.replace("'", "'\\''") + "'")
+    shell(outer, timeout=20)
+    deadline = time.time() + 20
+    last = ""
+    while time.time() < deadline:
+        try:
+            return json.loads(send("status", 5.0).decode())
+        except CliError as e:
+            last = str(e)
+            time.sleep(0.3)
+    tail = shell("tail -n 3 %s 2>/dev/null || true" % DEV_NATIVE_LOG, check=False).strip()
+    raise CliError("native daemon did not become ready (%s) log: %s"
+                   % (last, tail.replace("\n", " | ")))
+
+
+def do_up_native(t0):
+    started = False
+    rebuilt = ensure_forward()
+    try:
+        st = json.loads(send("status", 5.0).decode())
+    except CliError:
+        if device_native_sha() != local_native_sha():
+            push_native()
+        st = start_daemon_native()
+        started = True
+    else:
+        if device_native_sha() != local_native_sha():
+            do_down(quiet=True)
+            push_native()
+            st = start_daemon_native()
+            started = True
+    ensure_forward()
+    return {
+        "ok": True, "cmd": "up", "engine": ENGINE, "started": started,
+        "forwardRebuilt": rebuilt, "ms": round((time.monotonic() - t0) * 1000, 1),
+        "daemon": st,
+    }
+
+
+def do_up(force=False):
+    t0 = time.monotonic()
+    if ENGINE == "native":
+        return do_up_native(t0)
+    if not os.path.exists(LOCAL_DEX):
+        raise CliError("local DEX missing: " + LOCAL_DEX)
+    started = False
+    rebuilt = ensure_forward()
+    try:
+        st = json.loads(send("status", 5.0).decode())
+    except CliError:
+        if device_dex_sha() != local_dex_sha():
+            push_dex()
+        st = start_daemon()
+        started = True
+    else:
+        if device_dex_sha() != local_dex_sha():
+            # Running daemon no longer matches the built DEX: restart it.
+            do_down(quiet=True)
+            push_dex()
+            st = start_daemon()
+            started = True
+    ensure_forward()
+    return {
+        "ok": True, "cmd": "up", "started": started, "forwardRebuilt": rebuilt,
+        "ms": round((time.monotonic() - t0) * 1000, 1),
+        "daemon": st,
+    }
+
+
+TOP_RE = re.compile(r"ActivityRecord\{[^ ]+ u\d+ ([^ ,}]+) t(\d+)")
+ROOT_RE = re.compile(r"^RootTask id=(\d+).*displayId=(-?\d+)")
+
+
+def top_key(top):
+    """Component + task id: stable across ActivityRecord churn."""
+    m = TOP_RE.search(top or "")
+    return "%s t%s" % (m.group(1), m.group(2)) if m else (top or "")
+
+
+def snapshot_main():
+    """display 0 的顶层 RootTask + RootTask id 集合（全部来自 am stack list，天然按 display 划分）。
+
+    早先版本用 `dumpsys activity activities` 里的 topResumedActivity —— 那是**系统全局** top，
+    副屏（虚拟屏）上的前台 Activity 会把它抢走，导致 down 时误报 topChanged。
+    """
+    stacks = []          # [(rootId, displayId, topActivity)]
+    cur = None
+    for line in shell("am stack list", timeout=20).splitlines():
+        m = ROOT_RE.match(line)
+        if m:
+            cur = [int(m.group(1)), int(m.group(2)), ""]
+            stacks.append(cur)
+        elif cur is not None and line.strip().startswith("taskId="):
+            body = line.split("taskId=", 1)[1]
+            comp = body.split(":", 1)[1].strip().split(" ")[0] if ":" in body else ""
+            cur[2] = comp
+    top = ""
+    for root_id, display_id, comp in stacks:
+        if display_id == 0:
+            top = "t%d %s" % (root_id, comp)
+            break
+    tasks0 = [root_id for root_id, display_id, _ in stacks if display_id == 0]
+    return {"top": top, "tasks0": sorted(tasks0)}
+
+
+def do_down(quiet=False):
+    t0 = time.monotonic()
+    try:
+        before = snapshot_main()
+    except CliError:
+        before = {"top": "", "tasks0": []}
+    running = pid_of_daemon()
+    try:
+        reply = send("stop", 5.0).decode().strip()
+    except CliError as e:
+        if not running:
+            return {"ok": True, "cmd": "down", "alreadyStopped": True,
+                    "ms": round((time.monotonic() - t0) * 1000, 1)}
+        raise CliError("stop failed: %s" % e)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if not pid_of_daemon():
+            break
+        time.sleep(0.05)
+    still = pid_of_daemon()
+    after = snapshot_main()
+    same_top = top_key(before["top"]) == top_key(after["top"])
+    added = sorted(set(after["tasks0"]) - set(before["tasks0"]))
+    result = {
+        "ok": (not still) and same_top and not added, "cmd": "down", "reply": reply,
+        "daemonAlive": bool(still), "ms": round((time.monotonic() - t0) * 1000, 1),
+        "topBefore": before["top"], "topAfter": after["top"], "topUnchanged": same_top,
+        "tasks0Added": added,
+    }
+    if not result["ok"] and not quiet:
+        raise CliError("down unsafe: alive=%s topChanged=%s added=%s"
+                       % (bool(still), not same_top, added))
+    return result
+
+
+# ---------------------------------------------------------------- commands
+def jpeg_size(data):
+    if data[:2] != b"\xff\xd8":
+        return None, None
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            h = (data[i + 5] << 8) | data[i + 6]
+            w = (data[i + 7] << 8) | data[i + 8]
+            return w, h
+        if marker in (0xD8, 0xD9):
+            i += 2
+            continue
+        seglen = (data[i + 2] << 8) | data[i + 3]
+        i += 2 + seglen
+    return None, None
+
+
+def do_shot(out_path, scale):
+    t0 = time.monotonic()
+    req = "shot" if scale == 1 else "shot %d" % scale
+    data = call(req, timeout=10.0, auto_up=True)
+    if out_path is None:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        os.makedirs(SHOT_DIR, exist_ok=True)
+        out_path = os.path.join(SHOT_DIR, "hscreen-%s.jpg" % stamp)
+    with open(out_path, "wb") as f:
+        f.write(data)
+    w, h = jpeg_size(data)
+    res = {"ok": True, "cmd": "shot", "path": out_path, "bytes": len(data),
+           "width": w, "height": h, "scale": scale,
+           "ms": round((time.monotonic() - t0) * 1000, 1)}
+    if LAST_AUTOSTART["started"]:
+        res["autoStarted"] = True
+        res["autoStartMs"] = LAST_AUTOSTART["ms"]
+    return res
+
+
+def do_simple(cmd, request):
+    t0 = time.monotonic()
+    reply = call(request, timeout=12.0, auto_up=True).decode("utf-8", "replace")
+    res = {"ok": True, "cmd": cmd, "reply": reply.strip(),
+           "ms": round((time.monotonic() - t0) * 1000, 1)}
+    if LAST_AUTOSTART["started"]:
+        res["autoStarted"] = True
+        res["autoStartMs"] = LAST_AUTOSTART["ms"]
+    return res
+
+
+def do_tree(max_nodes=None):
+    """In-daemon UiAutomation read (reflection); errors come back as {"error":{code,message}}."""
+    t0 = time.monotonic()
+    req = "tree" if max_nodes is None else "tree %d" % max_nodes
+    payload = call(req, timeout=15.0, auto_up=True).decode("utf-8", "replace")
+    res = json.loads(payload)
+    if "error" in res:
+        err = res["error"]
+        raise CliError("%s: %s" % (err.get("code", "treeUnavailable"), err.get("message", "")))
+    res.update({"ok": True, "cmd": "tree", "ms": round((time.monotonic() - t0) * 1000, 1)})
+    if LAST_AUTOSTART["started"]:
+        res["autoStarted"] = True
+        res["autoStartMs"] = LAST_AUTOSTART["ms"]
+    return res
+
+
+def do_status():
+    t0 = time.monotonic()
+    st = json.loads(call("status", 6.0).decode())
+    st.update({"ok": True, "cmd": "status", "ms": round((time.monotonic() - t0) * 1000, 1)})
+    # m7.2：空闲自释放与自动起屏的口径写在 status 里，别让调用方去猜
+    idle = st.get("idleMinutes")
+    st["idleAutoRelease"] = ("off ('idle 0')" if idle == 0
+                             else "%s min (default %d, 'idle 0' disables)" % (idle, IDLE_DEFAULT_MIN))
+    st["autoStart"] = (False if NO_AUTOSTART
+                       else "on: commands except up/status/down run 'up' first when no daemon "
+                            "(HSCREEN_NO_AUTOSTART=1 disables)")
+    return st
+
+
+def do_doctor():
+    t0 = time.monotonic()
+    res = {"ok": True, "cmd": "doctor", "forward": forward_ok(),
+           "forwardMap": "tcp:%d->localabstract:%s" % (PORT, NSOCK)}
+    try:
+        res["daemon"] = json.loads(send("status", 6.0).decode())
+        pid = res["daemon"]["pid"]
+        proc = shell("cat /proc/%d/status 2>/dev/null | grep -E 'VmRSS|VmHWM'" % pid, check=False)
+        for line in proc.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                res[parts[0].rstrip(":")] = parts[1] + " kB"
+    except CliError as e:
+        res["daemon"] = None
+        res["daemonError"] = str(e)
+    res["deviceDexSha"] = device_dex_sha()
+    res["localDexSha"] = local_dex_sha() if os.path.exists(LOCAL_DEX) else ""
+    res["dexMatches"] = res["deviceDexSha"] == res["localDexSha"] != ""
+    mem = shell("grep -E 'MemTotal|MemAvailable' /proc/meminfo", check=False)
+    for line in mem.strip().splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            res[parts[0].rstrip(":")] = parts[1] + " kB"
+    disp = shell("dumpsys display | grep -c 'mDisplayId=' || true", check=False).strip()
+    res["displayEntries"] = disp
+    res["ms"] = round((time.monotonic() - t0) * 1000, 1)
+    return res
+
+
+# ---------------------------------------------------------------- argv
+def usage():
+    print("""hscreen %s - HiddenScreen control
+  (Agent 默认入口：看屏/读屏/输入都用我，不要用 uiautomator；读文字用 tree，看画面用 shot)
+
+  hscreen up                     ensure forward + daemon (idempotent)
+                                 (m7.2) 其他命令在没有 daemon 时会先自动 up 一次；
+                                 HSCREEN_NO_AUTOSTART=1 关闭该行为
+  hscreen down                   safe stop (tears down secondary tasks first)
+  hscreen restart
+  hscreen status                 daemon status JSON
+  hscreen doctor                 displays / daemon RSS / MemAvailable / forward
+  hscreen shot [--out F] [--scale N|--small]
+  hscreen tap X Y
+  hscreen swipe X1 Y1 X2 Y2 [ms]
+  hscreen key NAME               back|enter|delete|tab|up|down|left|right
+  hscreen type TEXT              visible ASCII only (no IME / CJK)
+  hscreen tree [MAX]             control tree (JSON) — 两个引擎都支持（native 走零 JVM 解码）
+  hscreen launch PKG/.Activity
+  hscreen idle MIN               idle self-release minutes (0 = off, default %d = 3 min)
+  hscreen version
+
+Engine: HSCREEN_ENGINE=java|native (default native). native 走独立 ELF 守护进程，
+        tree 两个引擎都支持（native 是零 JVM 的无障碍客户端，指标见 notes/hidden-screen-native-20261101/m6-tree-report.md）。
+""" % (VERSION, IDLE_DEFAULT_MIN))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        usage()
+        return 0 if argv else 2
+    cmd, args = argv[0], argv[1:]
+    if cmd == "version":
+        print(json.dumps({"ok": True, "version": VERSION, "forwardPort": PORT, "socket": NSOCK}))
+        return 0
+    if cmd == "up":
+        print(json.dumps(do_up(), ensure_ascii=False))
+        return 0
+    if cmd == "down":
+        print(json.dumps(do_down(), ensure_ascii=False))
+        return 0
+    if cmd == "restart":
+        res = do_down(quiet=True)
+        up = do_up()
+        up.update({"cmd": "restart", "previous": res})
+        print(json.dumps(up, ensure_ascii=False))
+        return 0
+    if cmd == "tree":
+        n = None
+        if args:
+            if len(args) != 1:
+                raise CliError("tree [MAX_NODES]")
+            n = int(args[0])
+        print(json.dumps(do_tree(n), ensure_ascii=False))
+        return 0
+    if cmd == "status":
+        print(json.dumps(do_status(), ensure_ascii=False))
+        return 0
+    if cmd == "doctor":
+        print(json.dumps(do_doctor(), ensure_ascii=False))
+        return 0
+    if cmd == "shot":
+        out_path, scale = None, 1
+        i = 0
+        while i < len(args):
+            if args[i] == "--out" and i + 1 < len(args):
+                out_path = args[i + 1]; i += 2
+            elif args[i] == "--scale" and i + 1 < len(args):
+                scale = int(args[i + 1]); i += 2
+            elif args[i] == "--small":
+                scale = 2; i += 1
+            else:
+                raise CliError("shot: unknown argument %s" % args[i])
+        if scale not in (1, 2, 3, 4):
+            raise CliError("shot: scale must be 1-4")
+        print(json.dumps(do_shot(out_path, scale), ensure_ascii=False))
+        return 0
+    if cmd == "tap":
+        if len(args) != 2:
+            raise CliError("tap X Y")
+        int(args[0]); int(args[1])
+        print(json.dumps(do_simple("tap", "tap %d %d" % (int(args[0]), int(args[1])))))
+        return 0
+    if cmd == "swipe":
+        if len(args) not in (4, 5):
+            raise CliError("swipe X1 Y1 X2 Y2 [ms]")
+        ms = int(args[4]) if len(args) == 5 else 300
+        req = "swipe %d %d %d %d %d" % (int(args[0]), int(args[1]), int(args[2]), int(args[3]), ms)
+        print(json.dumps(do_simple("swipe", req)))
+        return 0
+    if cmd == "key":
+        if len(args) != 1:
+            raise CliError("key NAME")
+        print(json.dumps(do_simple("key", "key %s" % args[0])))
+        return 0
+    if cmd == "type":
+        if not args:
+            raise CliError("type TEXT")
+        text = " ".join(args)
+        if any(ord(c) < 0x20 or ord(c) > 0x7E for c in text):
+            raise CliError("type: visible ASCII only; CJK/IME input is not supported")
+        print(json.dumps(do_simple("type", "type " + text), ensure_ascii=False))
+        return 0
+    if cmd == "launch":
+        if len(args) != 1:
+            raise CliError("launch PKG/.Activity")
+        print(json.dumps(do_simple("launch", "launch " + args[0]), ensure_ascii=False))
+        return 0
+    if cmd == "idle":
+        if len(args) != 1:
+            raise CliError("idle MINUTES (0 disables)")
+        print(json.dumps(do_simple("idle", "idle %d" % int(args[0]))))
+        return 0
+    raise CliError("unknown command: %s (try hscreen help)" % cmd)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except CliError as e:
+        sys.stderr.write("hscreen: %s\n" % e)
+        sys.exit(1)
+    except ValueError as e:
+        sys.stderr.write("hscreen: bad argument: %s\n" % e)
+        sys.exit(2)
