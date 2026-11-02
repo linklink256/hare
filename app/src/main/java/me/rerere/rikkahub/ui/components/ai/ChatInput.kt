@@ -60,6 +60,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -88,12 +89,12 @@ import me.rerere.asr.ASRStatus
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.ArrowUp02
-import me.rerere.hugeicons.stroke.Brain02
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Fullscreen
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getQuickMessagesOfAssistant
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
@@ -104,7 +105,6 @@ import me.rerere.rikkahub.ui.components.ai.completion.ChatCompletionContext
 import me.rerere.rikkahub.ui.components.ai.completion.ChatCompletionItem
 import me.rerere.rikkahub.ui.components.ai.completion.ChatCompletionList
 import me.rerere.rikkahub.ui.components.ai.completion.ChatCompletionProvider
-import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
 import me.rerere.rikkahub.ui.components.ui.KeepScreenOn
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionRecordAudio
@@ -144,10 +144,6 @@ fun ChatInput(
     onStartVoiceMode: (() -> Unit)? = null,
     voiceState: VoiceSessionState = VoiceSessionState(),
     onStopVoiceMode: () -> Unit = {},
-    // 子代理（团队成员）会话：底部收成左下角只显示当前模型的只读胶囊，不提供任何输入/发送入口。
-    // true = 成员会话；false = 普通/领队会话（输入区与改动前完全一致）；
-    // null = 归属还没查完，此时两样都不渲染，避免成员会话在判定完成前闪出可发送界面。
-    isTeamMemberConversation: Boolean? = false,
 ) {
     val toaster = LocalToaster.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -211,8 +207,17 @@ fun ChatInput(
         }
     }
 
-    // 底部渐变遮罩：从输入区顶部一直过渡到屏幕底部（键盘弹出时到键盘上沿），避免消息透到系统导航栏
-    val scrimColor = MaterialTheme.colorScheme.background
+    // 底部渐变遮罩：终点色取背景图底部平均色，遮住消息又不露出白色
+    val scrimContext = LocalContext.current
+    val scrimBase = MaterialTheme.colorScheme.background
+    val scrimBackground = settings.getCurrentAssistant().background
+    val scrimOpacity = settings.getCurrentAssistant().backgroundOpacity
+    var scrimColor by remember(scrimBackground, scrimBase) { mutableStateOf(scrimBase) }
+    LaunchedEffect(scrimBackground, scrimBase, scrimOpacity) {
+        scrimColor = scrimBackground?.let {
+            sampleChatScrimColor(scrimContext, it, scrimOpacity, scrimBase)
+        } ?: scrimBase
+    }
     val imeInsets = WindowInsets.ime
     Surface(
         color = Color.Transparent,
@@ -233,24 +238,6 @@ fun ChatInput(
                 .padding(bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 子代理（团队成员）会话：本判断先于一切输入交互构造（队列面板的编辑/继续
-            // 入口、文本框、附件、模型与推理选择、发送按钮）——成员会话只渲染左下角
-            // 只读模型胶囊，队列面板也不渲染；没有任何展开或聚焦入口。
-            when (isTeamMemberConversation) {
-                // 成员会话：只渲染胶囊（生成中附带最小停止入口），随后无条件早返回，
-                // 与语音状态无关——成员会话没有任何进入语音模式的入口。
-                true -> {
-                    // 只显示所用模型，不附带任何控件（无停止按钮/无展开/无编辑入口）
-                    TeamMemberInputCapsule(chatModel = chatModel)
-                    return@Column
-                }
-
-                // 归属还没查完：胶囊、队列面板与完整输入区都不渲染，避免成员会话闪出可发送界面
-                null -> return@Column
-
-                // 普通/领队会话：走下面的队列面板与完整输入区，与改动前一致
-                false -> Unit
-            }
             MessageQueuePanel(
                 state = messageQueue,
                 onRemove = onRemoveQueuedMessage,
@@ -437,57 +424,6 @@ private fun SendButton(
             tint = contentColor,
             modifier = Modifier.size(18.dp)
         )
-    }
-}
-
-/**
- * 子代理（团队成员）会话的收起态输入区：左下角一个只显示当前模型的小胶囊。
- *
- * 只读：不可点击、不展开、不打开模型选择，成员会话没有任何输入或发送入口；
- * 胶囊旁也不放任何控件（不沿用旧的停止控件），整行只有这一颗胶囊。
- */
-@Composable
-private fun TeamMemberInputCapsule(
-    chatModel: Model?,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Surface(
-            shape = CircleShape,
-            tonalElevation = 0.dp,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-            modifier = Modifier.testTag("chat_team_member_input_capsule"),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (chatModel != null) {
-                    AutoAIIcon(
-                        name = chatModel.modelId,
-                        modifier = Modifier.size(18.dp),
-                        color = Color.Transparent,
-                    )
-                } else {
-                    Icon(
-                        imageVector = HugeIcons.Brain02,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Text(
-                    text = chatModel?.displayName ?: stringResource(R.string.model_list_select_model),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-        }
     }
 }
 

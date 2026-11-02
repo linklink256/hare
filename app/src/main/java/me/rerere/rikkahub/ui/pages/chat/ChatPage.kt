@@ -3,9 +3,15 @@ package me.rerere.rikkahub.ui.pages.chat
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -38,18 +44,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.ui.toast.ToastType
-import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -65,6 +73,7 @@ import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.hugeicons.stroke.UserGroup
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
@@ -74,6 +83,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
+import me.rerere.rikkahub.ui.components.ai.sampleChatScrimColor
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -110,8 +120,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
-    // null = 还没判定完；只有明确是团队成员（子代理）会话才收起输入区
-    val isTeamMemberConversation by vm.isTeamMemberConversation.collectAsStateWithLifecycle()
+    // false = 会话仍在读库，页面渲染的是占位 Conversation
+    val conversationReady by vm.conversationReady.collectAsStateWithLifecycle()
 
     // 新会话发出第一条消息前，跟随抽屉当前选中的文件夹（#2133）
     val drawerVm: ChatDrawerVM = koinViewModel(viewModelStoreOwner = LocalContext.current as ComponentActivity)
@@ -228,7 +238,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     chatListState = chatListState,
                     assistant = assistant,
                     currentChatModel = currentChatModel,
-                    isTeamMemberConversation = isTeamMemberConversation,
+                    conversationReady = conversationReady,
                     bigScreen = true,
                     errors = errors,
                     onDismissError = { vm.dismissError(it) },
@@ -262,7 +272,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     chatListState = chatListState,
                     assistant = assistant,
                     currentChatModel = currentChatModel,
-                    isTeamMemberConversation = isTeamMemberConversation,
+                    conversationReady = conversationReady,
                     bigScreen = false,
                     errors = errors,
                     onDismissError = { vm.dismissError(it) },
@@ -291,8 +301,8 @@ private fun ChatPageContent(
     chatListState: LazyListState,
     assistant: Assistant,
     currentChatModel: Model?,
-    /** 当前会话是否为团队成员（子代理）会话；null = 还没判定完 */
-    isTeamMemberConversation: Boolean?,
+    /** 会话是否已从库里读出；false 时渲染骨架而不是占位空页 */
+    conversationReady: Boolean,
     errors: List<ChatError>,
     onDismissError: (Uuid) -> Unit,
     onClearAllErrors: () -> Unit,
@@ -302,7 +312,8 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
-    val hazeState = rememberHazeState()
+    // 背景图在导航层之外（RouteActivity），这里用同一份 Haze 源，输入框模糊照旧
+    val hazeState = LocalChatHazeState.current ?: rememberHazeState()
     var showFilesSheet by remember { mutableStateOf(false) }
     var showAgentTeam by remember { mutableStateOf(false) }
     val agentTeamPanel by vm.agentTeamPanel.collectAsStateWithLifecycle()
@@ -326,13 +337,22 @@ private fun ChatPageContent(
         }.orEmpty()
     }
 
+    // 底部渐变遮罩的终点色：跟随聊天背景图底部平均色
+    val scrimContext = LocalContext.current
+    val baseBackground = MaterialTheme.colorScheme.background
+    var chatScrimColor by remember(assistant.background) { mutableStateOf(baseBackground) }
+    LaunchedEffect(assistant.background, baseBackground) {
+        chatScrimColor = assistant.background?.let {
+            sampleChatScrimColor(scrimContext, it, assistant.backgroundOpacity, baseBackground)
+        } ?: baseBackground
+    }
+
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
 
     Surface(
-        color = MaterialTheme.colorScheme.background,
+        color = Color.Transparent,
         modifier = Modifier.fillMaxSize()
     ) {
-        AssistantBackground(setting = setting, modifier = Modifier.hazeSource(hazeState))
         Scaffold(
             topBar = {
                 TopBar(
@@ -340,6 +360,7 @@ private fun ChatPageContent(
                     assistant = assistant,
                     chatModel = currentChatModel,
                     conversation = conversation,
+                    conversationReady = conversationReady,
                     bigScreen = bigScreen,
                     drawerState = drawerState,
                     previewMode = previewMode,
@@ -375,10 +396,6 @@ private fun ChatPageContent(
                     settings = setting,
                     assistant = assistant,
                     chatModel = currentChatModel,
-                    // 仅团队成员（子代理）会话把输入区收成左下角只读模型胶囊；
-                    // 普通/领队会话（false）与改动前完全一致；
-                    // null = 归属还没查完，此时胶囊与完整输入区都不渲染，避免闪出可发送界面。
-                    isTeamMemberConversation = isTeamMemberConversation,
                     hazeState = hazeState,
                     completionProviders = completionProviders,
                     onCancelClick = {
@@ -426,6 +443,15 @@ private fun ChatPageContent(
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
+            Box(modifier = Modifier.fillMaxSize()) {
+            if (!conversationReady) {
+                // 读库期间盖一层静态骨架，避免先闪一帧空标题 + 空正文
+                ConversationSkeleton(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                )
+            }
             ChatList(
                 innerPadding = innerPadding,
                 conversation = conversation,
@@ -442,12 +468,8 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onEdit = {
-                    // 成员（子代理）会话整体不渲染输入区，这里显式忽略，避免编辑态被写进
-                    // inputState 后在别处（草稿建议/队列面板）意外重现可编辑入口。
-                    if (isTeamMemberConversation == false) {
-                        inputState.editingMessage = it.id
-                        inputState.setContents(it.parts)
-                    }
+                    inputState.editingMessage = it.id
+                    inputState.setContents(it.parts)
                 },
                 onForkMessage = {
                     scope.launch {
@@ -466,11 +488,8 @@ private fun ChatPageContent(
                     vm.selectMessageNode(newNode.id, newNode.selectIndex)
                 },
                 onClickSuggestion = { suggestion ->
-                    // 同上：成员会话没有输入区，草稿建议只写状态也不该生效（不清空已有草稿）。
-                    if (isTeamMemberConversation == false) {
-                        inputState.editingMessage = null
-                        inputState.setMessageText(suggestion)
-                    }
+                    inputState.editingMessage = null
+                    inputState.setMessageText(suggestion)
                 },
                 onTranslate = { message, locale ->
                     vm.translateMessage(message, locale)
@@ -497,6 +516,19 @@ private fun ChatPageContent(
                     vm.updateConversationSystemPrompt(newPrompt)
                 },
             )
+                // 消息滚到输入区上方时淡出到背景色，遮住内容但不透白
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, chatScrimColor),
+                            )
+                        )
+                )
+            }
         }
 
         if (showFilesSheet) {
@@ -609,6 +641,7 @@ private fun TopBar(
     assistant: Assistant,
     chatModel: Model?,
     conversation: Conversation,
+    conversationReady: Boolean,
     drawerState: DrawerState,
     bigScreen: Boolean,
     previewMode: Boolean,
@@ -651,7 +684,11 @@ private fun TopBar(
                 Column {
                     val provider = chatModel?.findProvider(providers = settings.providers, checkOverwrite = false)
                     Text(
-                        text = conversation.title.ifBlank { stringResource(R.string.chat_page_new_chat) },
+                        text = if (conversationReady) {
+                            conversation.title.ifBlank { stringResource(R.string.chat_page_new_chat) }
+                        } else {
+                            ""
+                        },
                         maxLines = 1,
                         style = MaterialTheme.typography.bodyMedium,
                         overflow = TextOverflow.Ellipsis,
@@ -729,5 +766,25 @@ private fun TopBar(
                 }
             }
         )
+    }
+}
+
+/** 会话还没读出来时的静态骨架（不带动画，避免又引入新的视觉跳动）。 */
+@Composable
+private fun ConversationSkeleton(modifier: Modifier = Modifier) {
+    val barColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    Column(
+        modifier = modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        repeat(3) { index ->
+            Box(
+                Modifier
+                    .fillMaxWidth(if (index % 2 == 0) 0.55f else 0.85f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(barColor)
+            )
+        }
     }
 }

@@ -70,10 +70,12 @@ fun <T> ChainOfThought(
     steps: List<T>,
     collapsedVisibleCount: Int = 2,
     collapsedAdaptiveWidth: Boolean = false,
+    // false = 不提供「再显示 N 步」，全部步骤直接渲染（外层已做折叠）
+    collapsible: Boolean = true,
     content: @Composable ChainOfThoughtScope.(T) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val canCollapse = steps.size > collapsedVisibleCount
+    val canCollapse = collapsible && steps.size > collapsedVisibleCount
     val shouldFillCollapseControlWidth = expanded || !collapsedAdaptiveWidth
 
     Card(

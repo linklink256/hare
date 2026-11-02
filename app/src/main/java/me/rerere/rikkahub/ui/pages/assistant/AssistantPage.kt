@@ -89,9 +89,6 @@ import kotlin.uuid.Uuid
 @Composable
 fun AssistantPage(vm: AssistantVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val createState = useEditState<Assistant> {
-        vm.addAssistant(it)
-    }
     val navController = LocalNavController.current
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -124,14 +121,6 @@ fun AssistantPage(vm: AssistantVM = koinViewModel()) {
                 },
                 navigationIcon = {
                     BackButton()
-                },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            createState.open(Assistant())
-                        }) {
-                        Icon(HugeIcons.Add01, stringResource(R.string.assistant_page_add))
-                    }
                 },
                 scrollBehavior = scrollBehavior,
                 colors = CustomColors.topBarColors,
@@ -243,7 +232,6 @@ fun AssistantPage(vm: AssistantVM = koinViewModel()) {
         }
     }
 
-    AssistantCreationSheet(createState)
 
     RikkaConfirmDialog(
         show = deleteTarget != null,
@@ -350,7 +338,7 @@ private fun AssistantTagsFilterRow(
 }
 
 @Composable
-private fun AssistantCreationSheet(
+internal fun AssistantCreationSheet(
     state: EditState<Assistant>,
 ) {
     state.EditStateContent { assistant, update ->

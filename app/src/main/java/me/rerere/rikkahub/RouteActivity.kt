@@ -56,6 +56,8 @@ import coil3.gif.GifDecoder
 import coil3.network.cachecontrol.CacheControlCacheStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import coil3.svg.SvgDecoder
 import me.rerere.ui.toast.Toaster
 import me.rerere.ui.toast.rememberToasterState
@@ -91,7 +93,9 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantRequestPage
 import me.rerere.rikkahub.ui.pages.backup.BackupPage
+import me.rerere.rikkahub.ui.pages.chat.AssistantBackground
 import me.rerere.rikkahub.ui.pages.chat.ChatPage
+import me.rerere.rikkahub.ui.pages.chat.LocalChatHazeState
 import me.rerere.rikkahub.ui.pages.debug.DebugPage
 import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
@@ -142,6 +146,7 @@ import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.CrashHandler
+import me.rerere.rikkahub.utils.InlineDecodeCapInterceptor
 import me.rerere.rikkahub.utils.openUsageAccessSettings
 import okhttp3.OkHttpClient
 import org.koin.android.ext.android.inject
@@ -214,6 +219,7 @@ class RouteActivity : ComponentActivity() {
                                 add(GifDecoder.Factory())
                             }
                             add(SvgDecoder.Factory(scaleToDensity = true))
+                            add(InlineDecodeCapInterceptor)
                         }
                         .build()
                 }
@@ -307,6 +313,9 @@ class RouteActivity : ComponentActivity() {
         )
 
         val backStack = rememberNavBackStack(startScreen)
+        // 聊天背景图挂在这一层：会话切换会整页重建（clearAndNavigate），
+        // 背景放在页面里每次都要重新加载，转场那几帧就只剩主题底色
+        val chatHazeState = rememberHazeState()
         SideEffect {
             navStack = backStack
             while (pendingIntents.isNotEmpty()) {
@@ -319,6 +328,7 @@ class RouteActivity : ComponentActivity() {
                 LocalNavController provides Navigator(backStack),
                 LocalSharedTransitionScope provides this,
                 LocalSettings provides settings,
+                LocalChatHazeState provides chatHazeState,
                 LocalToaster provides toastState,
                 LocalTTSState provides tts,
                 LocalASRState provides asr,
@@ -330,6 +340,14 @@ class RouteActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true }
                         .background(MaterialTheme.colorScheme.background)
                 ) {
+                    if (backStack.lastOrNull() is Screen.Chat) {
+                        AssistantBackground(
+                            setting = settings,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .hazeSource(chatHazeState),
+                        )
+                    }
                     NavDisplay(
                         backStack = backStack,
                         entryDecorators = listOf(
