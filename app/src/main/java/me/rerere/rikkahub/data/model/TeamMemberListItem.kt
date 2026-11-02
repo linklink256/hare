@@ -12,6 +12,9 @@ data class TeamMemberListItem(
     val awaitingApproval: Boolean? = null,
     /** ChatService 里该会话是否还有没清掉的错误 */
     val hasError: Boolean = false,
+    /** 队友会话自身的创建/更新时间（排序用；会话行不存在时为空） */
+    val conversationCreateAt: Long? = null,
+    val conversationUpdateAt: Long? = null,
 ) {
     val displayTitle: String get() = title.takeIf { it.isNotBlank() } ?: member.name
 }
