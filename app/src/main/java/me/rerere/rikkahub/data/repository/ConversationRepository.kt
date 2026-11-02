@@ -19,11 +19,13 @@ import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
+import me.rerere.rikkahub.data.db.entity.ConversationTitle
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.PackedMessageList
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.utils.JsonInstant
 import java.time.Instant
@@ -71,9 +73,10 @@ class ConversationRepository(
     fun observeTitleById(id: Uuid): Flow<String?> =
         conversationDAO.observeTitleById(id.toString()).distinctUntilChanged()
 
-    fun observeTitlesOfTeam(teamId: Uuid): Flow<Map<Uuid, String>> =
+    /** 队友会话的标题与时间戳：抽屉团队视图按同一个排序设置给成员排序 */
+    fun observeTitlesOfTeam(teamId: Uuid): Flow<Map<Uuid, ConversationTitle>> =
         conversationDAO.observeTitlesOfTeam(teamId.toString())
-            .map { rows -> rows.associate { Uuid.parse(it.conversationId) to it.title } }
+            .map { rows -> rows.associate { Uuid.parse(it.conversationId) to it } }
             .distinctUntilChanged()
 
     suspend fun getTitlesOfAssistant(assistantId: Uuid): Set<String> =
@@ -405,7 +408,11 @@ class ConversationRepository(
     }
 
     fun conversationToConversationEntity(conversation: Conversation): ConversationEntity {
-        require(conversation.messageNodes.none { it.messages.any { message -> message.hasBase64Part() } })
+        // base64 附件判定：压缩行物化后走同一份 hasBase64Part——
+        // 行内正文含 "data:" 字面量（如讨论 data URI）不该误杀（该错误会 require 失败回滚整次落库）
+        require(conversation.messageNodes.none { node ->
+            node.messages.any { it.hasBase64Part() }
+        })
         return ConversationEntity(
             id = conversation.id.toString(),
             title = conversation.title,
@@ -532,12 +539,12 @@ class ConversationRepository(
                 val page = messageNodeDAO.getNodesOfConversationPaged(conversationId, pageSize, offset)
                 if (page.isEmpty()) break
                 page.forEach { entity ->
-                    val messages = JsonInstant.decodeFromString<List<UIMessage>>(entity.messages)
+                    // 行 JSON 不在这里解码：包成 gzip 常驻、读时物化
                     val nodeId = Uuid.parse(entity.id)
                     nodes.add(
                         MessageNode(
                             id = nodeId,
-                            messages = messages,
+                            messages = PackedMessageList.fromRowJson(entity.messages),
                             selectIndex = entity.selectIndex,
                             isFavorite = favoriteNodeIds.contains(nodeId)
                         )
@@ -554,12 +561,16 @@ class ConversationRepository(
     }
 
     private suspend fun saveMessageNode(conversationId: String, index: Int, node: MessageNode) {
+        val rowJson = when (val m = node.messages) {
+            is PackedMessageList -> m.toRowJson()
+            else -> JsonInstant.encodeToString(m)
+        }
         messageNodeDAO.insert(
             MessageNodeEntity(
                 id = node.id.toString(),
                 conversationId = conversationId,
                 nodeIndex = index,
-                messages = JsonInstant.encodeToString(node.messages),
+                messages = rowJson,
                 selectIndex = node.selectIndex,
             )
         )

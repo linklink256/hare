@@ -40,6 +40,9 @@ internal class AgentLoop(
     // 本轮的助手消息；新的一轮在第一次请求模型时才创建
     private var message: UIMessage?
 
+    // 运行中被插进来的消息（队友结果等），每一步接在当前助手消息之后发给模型
+    private var steers: List<UIMessage> = emptyList()
+
     init {
         val last = request.messages.lastOrNull()
         if (last?.role == MessageRole.ASSISTANT) {
@@ -52,14 +55,18 @@ internal class AgentLoop(
     }
 
     suspend fun run() {
-        var steps = 0
+        // 步数是同一 Run 的累计预算：始终从 initialSteps 起步，不因会话末条不是助手消息而归零
+        var steps = request.initialSteps
         while (true) {
             val current = message
+            // 收尾前再看一眼插话：有新插话就继续这一轮，不提前完成
+            val fresh = hooks.drainSteer()
+            if (fresh.isNotEmpty()) steers = steers + fresh
             if (current != null && current.getTools().any { !it.isExecuted }) {
                 val pending = requestApprovals(current)
                 if (pending.isNotEmpty()) return finish(AgentFinishReason.AwaitingApproval(pending))
                 executeTools()
-            } else if (current != null && steps > 0) {
+            } else if (current != null && steps > 0 && fresh.isEmpty()) {
                 return finish(AgentFinishReason.Completed)
             }
             if (steps == request.maxSteps) return finish(AgentFinishReason.StepLimitReached)
@@ -88,7 +95,7 @@ internal class AgentLoop(
 
     private suspend fun generateStep() {
         val current = message
-        val step = hooks.prepareStep(if (current == null) history else history + current)
+        val step = hooks.prepareStep((if (current == null) history else history + current) + steers)
         val params = step.params.copy(tools = request.tools)
         val base = current ?: UIMessage(
             role = MessageRole.ASSISTANT,

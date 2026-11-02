@@ -8,6 +8,9 @@ import kotlinx.serialization.json.put
 
 internal fun canUseTeamTools(enabled: Boolean, isMember: Boolean): Boolean = enabled && !isMember
 
+/** 成员专属工具（report_back）：与领队工具互斥，只有团队成员会话可选 */
+internal fun canUseMemberReportTools(enabled: Boolean, isMember: Boolean): Boolean = enabled && isMember
+
 /** Recheck at execution time, including cached tools / resumed approvals from old histories. */
 internal fun guardTeamTool(tool: Tool, authorize: suspend () -> Unit): Tool = tool.copy(
     execute = { input ->

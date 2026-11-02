@@ -39,6 +39,7 @@ import me.rerere.rikkahub.di.appModule
 import me.rerere.rikkahub.di.dataSourceModule
 import me.rerere.rikkahub.di.repositoryModule
 import me.rerere.rikkahub.di.viewModelModule
+import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.MediaCreationService
 import me.rerere.rikkahub.service.WebServerService
@@ -97,6 +98,9 @@ class RikkaHubApp : Application() {
             })
         }
         this.createNotificationChannel()
+
+        // 队友每轮结束的结果要能自动投递到领队会话：启动时就订阅，不等团队工具第一次被用到。
+        get<AppScope>().launch { get<AgentTeamService>() }
 
         // set cursor window size to 32MB
         DatabaseUtil.setCursorWindowSize(32 * 1024 * 1024)

@@ -2,6 +2,7 @@ package me.rerere.ai.agent
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderSetting
@@ -22,6 +23,11 @@ data class AgentRequest(
     val stream: Boolean = true,
     /** 最多请求模型的次数 */
     val maxSteps: Int = 256,
+    /**
+     * 本次调用已用掉的步数（同一 Run 的审批/暂停续跑带入）。
+     * 默认 0 保持原有行为；调用方负责保证 0 <= initialSteps <= maxSteps。
+     */
+    val initialSteps: Int = 0,
     val retry: RetryPolicy = RetryPolicy.NONE,
 )
 
@@ -50,6 +56,12 @@ interface AgentHooks {
 
     /** Last received stream snapshot when the collector is cancelled; do not emit into its Flow. */
     suspend fun interruptedStep(message: UIMessage) {}
+
+    /**
+     * 运行中插话：每一步请求模型之前取一次，取到的消息接在本轮助手消息之后一起发给模型。
+     * 用于队友结果这类「不用等这一轮结束」的外部输入；返回空表示没有。
+     */
+    suspend fun drainSteer(): List<UIMessage> = emptyList()
 }
 
 data class StepRequest(
@@ -88,5 +100,16 @@ sealed interface AgentFinishReason {
  */
 fun runAgent(request: AgentRequest, hooks: AgentHooks): Flow<AgentEvent> = flow {
     require(request.maxSteps > 0) { "maxSteps must be positive" }
+    require(request.initialSteps in 0..request.maxSteps) {
+        "initialSteps must be within 0..maxSteps"
+    }
+    // 预算已用尽时必须有一条可收尾的助手消息：先处理它的待执行工具再按现有顺序返回 StepLimit。
+    // 不能无提示归零后继续请求模型；真正续跑/扩展预算由调用方（Run 状态）决定。
+    require(
+        request.initialSteps < request.maxSteps ||
+            request.messages.lastOrNull()?.role == MessageRole.ASSISTANT
+    ) {
+        "initialSteps == maxSteps requires a trailing assistant message; resume is the caller's decision"
+    }
     AgentLoop(request, hooks, this).run()
 }

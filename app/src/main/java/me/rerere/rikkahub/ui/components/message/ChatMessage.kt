@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -58,7 +61,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.util.fastAll
-import androidx.compose.ui.util.fastForEach
+import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastForEachIndexed
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -72,7 +75,12 @@ import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyUIMessage
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowDown01
+import me.rerere.hugeicons.stroke.ArrowUp01
+import me.rerere.hugeicons.stroke.Sparkles
+import androidx.compose.ui.text.style.TextOverflow
 import me.rerere.hugeicons.stroke.File02
+import me.rerere.hugeicons.stroke.Layers01
 import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
@@ -181,6 +189,8 @@ fun ChatMessage(
                 assistant = assistant,
                 role = message.role,
                 parts = message.parts,
+                // 引用点击与 haptic 仍需整条消息的 parts
+                allParts = message.parts,
                 annotations = message.annotations,
                 loading = loading,
                 model = model,
@@ -197,6 +207,7 @@ fun ChatMessage(
             }
         }
 
+        // 操作条、文件列表与 nerd line 属于文末内容
         val showActions = if (lastMessage) {
             !loading
         } else {
@@ -223,7 +234,8 @@ fun ChatMessage(
                         showActionsSheet = true
                     },
                     onTranslate = onTranslate,
-                    onClearTranslation = onClearTranslation
+                    onClearTranslation = onClearTranslation,
+                    loading = loading,
                 )
             }
         }
@@ -294,12 +306,14 @@ private fun MessagePartsBlock(
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onUserMessageClick: (() -> Unit)? = null,
+    // 整条消息的 parts：引用点击要全量扫描
+    allParts: List<UIMessagePart> = parts,
 ) {
     val context = LocalContext.current
     // 消息输出HapticFeedback
     val hapticFeedback = LocalHapticFeedback.current
     val settings = LocalSettings.current
-    val partsState by rememberUpdatedState(parts)
+    val partsState by rememberUpdatedState(allParts)
 
     val handleClickCitation: (String) -> Unit = remember {
         handler@{ citationId ->
@@ -333,50 +347,50 @@ private fun MessagePartsBlock(
 
     // Render parts in original order (group thinking/tool as chain-of-thought)
     val groupedParts = remember(parts) { parts.groupMessageParts() }
-    groupedParts.fastForEach { block ->
+    groupedParts.fastForEachIndexed { index, block ->
         when (block) {
             is MessagePartBlock.ThinkingBlock -> {
                 if (block.steps.isNotEmpty()) {
                     val isReasoningOnlyBlock = block.steps.fastAll { it is ThinkingStep.ReasoningStep }
-                    // 尺寸动画由 ChainOfThought 内部 Column 自带（defaultSpatialSpec），
-                    // 这里不再叠加一层外层 animateContentSize，避免同一尺寸变化被动画两遍。
-                    ChainOfThought(
-                        steps = block.steps,
-                        collapsedAdaptiveWidth = isReasoningOnlyBlock,
-                        cardColors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
-                        ),
-                    ) { step ->
-                        when (step) {
-                            is ThinkingStep.ReasoningStep -> {
-                                key(step.reasoning.createdAt) {
-                                    ChatMessageReasoningStep(
-                                        reasoning = step.reasoning,
-                                        model = model,
-                                        assistant = assistant,
-                                        collapsedAdaptiveWidth = isReasoningOnlyBlock,
-                                    )
-                                }
-                            }
-
-                            is ThinkingStep.ToolStep -> {
-                                key(step.tool.toolCallId.ifBlank { step.hashCode().toString() }) {
-                                    ChatMessageToolStep(
-                                        tool = step.tool,
-                                        loading = loading && !step.tool.isExecuted,
-                                        assistant = assistant,
-                                        onToolApproval = onToolApproval,
-                                        onToolAnswer = onToolAnswer,
-                                    )
-                                }
-                            }
-
-                            is ThinkingStep.ServerToolStep -> {
-                                key(step.tool.toolCallId.ifBlank { step.hashCode().toString() }) {
-                                    ChatMessageServerToolStep(tool = step.tool)
-                                }
-                            }
-                        }
+                    // 有待回答的提问 / 待审批工具时不能被胶囊收起来，否则没法在折叠外操作
+                    val hasPendingInteraction = block.steps.fastAny {
+                        it is ThinkingStep.ToolStep && it.tool.isPending
+                    }
+                    // 生成中的最后一块过程里，已完成的前缀也直接收进胶囊，只留正在跑的那一步展开；
+                    // 过程结束（后面开始出正文）或整轮结束时整块收成胶囊
+                    val isActiveBlock =
+                        loading && index == groupedParts.lastIndex && !hasPendingInteraction
+                    val runningStepIndex =
+                        if (isActiveBlock) block.steps.indexOfLast { !it.isFinishedStep } else -1
+                    // 生成中始终留最后一步在胶囊外面：胶囊后面不会只剩它自己
+                    val collapsedCount = when {
+                        !isActiveBlock -> block.steps.size
+                        runningStepIndex <= 0 -> if (runningStepIndex < 0) block.steps.size - 1 else 0
+                        else -> runningStepIndex
+                    }
+                    var stepsExpanded by remember(block.steps.size) { mutableStateOf(false) }
+                    if (collapsedCount > 0 && !hasPendingInteraction) {
+                        ThinkingSummaryPill(
+                            steps = block.steps.take(collapsedCount),
+                            expanded = stepsExpanded,
+                            bubbleOpacity = settings.displaySetting.bubbleOpacity,
+                            onClick = { stepsExpanded = !stepsExpanded },
+                        )
+                    }
+                    val visibleSteps =
+                        if (stepsExpanded || hasPendingInteraction) block.steps
+                        else block.steps.drop(collapsedCount)
+                    if (visibleSteps.isNotEmpty()) {
+                        ThinkingSteps(
+                            steps = visibleSteps,
+                            isReasoningOnlyBlock = isReasoningOnlyBlock,
+                            loading = loading,
+                            model = model,
+                            assistant = assistant,
+                            bubbleOpacity = settings.displaySetting.bubbleOpacity,
+                            onToolApproval = onToolApproval,
+                            onToolAnswer = onToolAnswer,
+                        )
                     }
                 }
             }
@@ -578,7 +592,11 @@ private fun ChatMessageBubble(
             // MarkdownBlock 自带 4dp 的水平内边距
             .padding(horizontal = 10.dp, vertical = 10.dp),
     ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) { content() }
+        // 内容单独进一层：文本排版与绘制结果为 RenderNode 缓存，滚动时只换位置，
+        // 不再每帧重新录制超长消息的文本（本轮要验证的正是这一条）
+        Box(modifier = Modifier.graphicsLayer()) {
+            CompositionLocalProvider(LocalContentColor provides contentColor) { content() }
+        }
     }
 }
 
@@ -651,6 +669,127 @@ private fun ChatMessageCitations(annotations: List<UIMessageAnnotation>) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** 完整的推理 / 工具步骤列表（原 ChainOfThought 渲染） */
+@Composable
+private fun ThinkingSteps(
+    steps: List<ThinkingStep>,
+    isReasoningOnlyBlock: Boolean,
+    loading: Boolean,
+    model: Model?,
+    assistant: Assistant?,
+    bubbleOpacity: Float,
+    onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)?,
+    onToolAnswer: ((toolCallId: String, answer: String) -> Unit)?,
+) {
+    // 尺寸动画由 ChainOfThought 内部 Column 自带（defaultSpatialSpec），
+    // 这里不再叠加一层外层 animateContentSize，避免同一尺寸变化被动画两遍。
+    // 折叠交给上面的胶囊，这里一次渲染全部步骤
+    ChainOfThought(
+        steps = steps,
+        collapsedAdaptiveWidth = isReasoningOnlyBlock,
+        collapsible = false,
+        cardColors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bubbleOpacity),
+        ),
+    ) { step ->
+        when (step) {
+            is ThinkingStep.ReasoningStep -> {
+                key(step.reasoning.createdAt) {
+                    ChatMessageReasoningStep(
+                        reasoning = step.reasoning,
+                        model = model,
+                        assistant = assistant,
+                        collapsedAdaptiveWidth = isReasoningOnlyBlock,
+                    )
+                }
+            }
+
+            is ThinkingStep.ToolStep -> {
+                key(step.tool.toolCallId.ifBlank { step.hashCode().toString() }) {
+                    ChatMessageToolStep(
+                        tool = step.tool,
+                        loading = loading && !step.tool.isExecuted,
+                        assistant = assistant,
+                        onToolApproval = onToolApproval,
+                        onToolAnswer = onToolAnswer,
+                    )
+                }
+            }
+
+            is ThinkingStep.ServerToolStep -> {
+                key(step.tool.toolCallId.ifBlank { step.hashCode().toString() }) {
+                    ChatMessageServerToolStep(tool = step.tool)
+                }
+            }
+        }
+    }
+}
+
+/** 这一步是否已经跑完（生成中的最后一步仍在跑） */
+private val ThinkingStep.isFinishedStep: Boolean
+    get() = when (this) {
+        is ThinkingStep.ReasoningStep -> reasoning.finishedAt != null
+        is ThinkingStep.ToolStep -> tool.isExecuted
+        is ThinkingStep.ServerToolStep -> tool.isFinished
+    }
+
+/** 已完成轮次的过程胶囊：外观与「思考了 X 秒」一致，点开才渲染步骤 */
+@Composable
+private fun ThinkingSummaryPill(
+    steps: List<ThinkingStep>,
+    expanded: Boolean,
+    bubbleOpacity: Float,
+    onClick: () -> Unit,
+) {
+    val reasoningCount = remember(steps) { steps.count { it is ThinkingStep.ReasoningStep } }
+    val toolCount = remember(steps) { steps.count { it is ThinkingStep.ToolStep } }
+    val summary = remember(reasoningCount, toolCount) {
+        buildString {
+            if (reasoningCount > 0) append("思考 ").append(reasoningCount)
+            if (reasoningCount > 0 && toolCount > 0) append(" · ")
+            if (toolCount > 0) append("工具 ").append(toolCount)
+            if (isEmpty()) append(steps.size).append(" 步")
+        }
+    }
+    val shape = RoundedCornerShape(20.dp)
+    Card(
+        shape = shape,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bubbleOpacity),
+        ),
+        modifier = Modifier
+            .clip(shape)
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            // 与单条「思考了 X 秒」胶囊同高：上下各 12dp，图标 16dp
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                // 层叠图标代表「一组被收起的步骤」
+                imageVector = HugeIcons.Layers01,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+            )
+            Icon(
+                imageVector = if (expanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

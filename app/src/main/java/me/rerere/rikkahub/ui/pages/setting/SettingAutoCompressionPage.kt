@@ -51,7 +51,7 @@ fun SettingAutoCompressionPage() {
                     checked = settings.autoCompressionEnabled,
                     onCheckedChange = { enabled -> vm.updateSettings { it.copy(autoCompressionEnabled = enabled) } },
                     headlineContent = { Text("自动压缩") },
-                    supportingContent = { Text("默认开启，适用于领队与队友。任务中达到阈值只标记，等本轮模型和工具调用全部正常完成后再检查并压缩；等待审批、达到步数上限、失败或取消时不压缩。") },
+                    supportingContent = { Text("默认开启，适用于领队与队友。任务中达到阈值只标记，等本轮模型和工具调用全部正常完成后再压缩：把上一个摘要之后直到最终答复的整段已完成回合（含工具过程）收成摘要，检查点放在最终答复之后；原消息仍可在对话里查看、复制和导出。等待审批、达到步数上限、失败或取消时不压缩。") },
                 )
                 formItem(
                     headlineContent = { Text("触发比例（%）") },
@@ -61,18 +61,6 @@ fun SettingAutoCompressionPage() {
                         value = settings.autoCompressionThresholdPercent,
                         onValueChange = { value ->
                             vm.updateSettings { it.copy(autoCompressionThresholdPercent = value.coerceIn(10, 95)) }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                formItem(
-                    headlineContent = { Text("保留最近消息数") },
-                    supportingContent = { Text("1–100，默认 6；不拆分同一条消息中的工具调用。历史不足时适当减少保留数，最新任务回复始终保留。") },
-                ) {
-                    OutlinedNumberInput(
-                        value = settings.autoCompressionKeepRecent,
-                        onValueChange = { value ->
-                            vm.updateSettings { it.copy(autoCompressionKeepRecent = value.coerceIn(1, 100)) }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )

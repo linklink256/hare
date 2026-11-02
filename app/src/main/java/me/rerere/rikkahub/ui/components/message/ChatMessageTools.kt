@@ -26,6 +26,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -104,6 +105,8 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
     assistant: Assistant? = null,
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    // false = 已经跑完的上一步：进来就收成一行；用户手动点开后不自动收起
+    autoExpand: Boolean = true,
 ) {
     // ask_user 是交互式问答流程, 不走注册式渲染框架
     if (tool.toolName == ASK_USER_TOOL_NAME) {
@@ -139,7 +142,11 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
 
     var showResult by remember { mutableStateOf(false) }
     var showDenyDialog by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf(true) }
+    var expanded by remember(tool.toolCallId) { mutableStateOf(autoExpand) }
+    var userToggledExpand by remember(tool.toolCallId) { mutableStateOf(false) }
+    LaunchedEffect(autoExpand) {
+        if (!autoExpand && !userToggledExpand) expanded = false
+    }
     val isPending = tool.isPending
     val isDenied = tool.approvalState is ToolApprovalState.Denied
     val images = tool.output.filterIsInstance<UIMessagePart.Image>()
@@ -149,8 +156,9 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
     val hasExtraContent = renderer.hasSummary(context) || isDenied || images.isNotEmpty()
 
     ControlledChainOfThoughtStep(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
+        // 待审批时强制展开，避免按钮被折叠藏起来
+        expanded = expanded || isPending,
+        onExpandedChange = { userToggledExpand = true; expanded = it },
         icon = {
             if (loading) {
                 DotLoading(

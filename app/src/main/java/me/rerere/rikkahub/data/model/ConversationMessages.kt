@@ -76,7 +76,7 @@ internal fun Conversation.withToolApproval(toolCallId: String, approvalState: To
     }
     return copy(
         messageNodes = messageNodes.map { node ->
-            node.copy(messages = node.messages.map { message ->
+            val updatedMessages = node.messages.map { message ->
                 message.copy(parts = message.parts.map { part ->
                     if (part is UIMessagePart.Tool && part.toolCallId == toolCallId) {
                         part.copy(approvalState = approvalState)
@@ -84,7 +84,13 @@ internal fun Conversation.withToolApproval(toolCallId: String, approvalState: To
                         part
                     }
                 })
-            })
+            }
+            // 只改写真正变了的节点，其余节点（含未物化的压缩行）原样保留
+            if (updatedMessages.indices.any { updatedMessages[it] !== node.messages[it] }) {
+                node.copy(messages = updatedMessages)
+            } else {
+                node
+            }
         }
     )
 }

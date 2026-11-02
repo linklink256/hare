@@ -53,12 +53,15 @@ data class DrawerTeamView(
     val members: List<TeamMemberListItem>,
 )
 
+// 滚动位置按「助手 + 文件夹」分别存在 SavedStateHandle 里
+private const val SCROLL_INDEX_MAP = "scrollIndexMap"
+private const val SCROLL_OFFSET_MAP = "scrollOffsetMap"
+
 /** 一次会话列表查询的输入 */
 private data class ConversationListQuery(
     val assistantId: Uuid,
     val folderId: Uuid?,
     val sortOrder: ConversationSortOrder,
-    val hiddenConversationIds: Set<Uuid>,
 )
 
 class ChatDrawerVM(
@@ -110,10 +113,12 @@ class ChatDrawerVM(
     val teamView: StateFlow<DrawerTeamView?> = _teamView.asStateFlow()
 
     val conversations: Flow<PagingData<ConversationListItem>> =
-        combine(assistantIdFlow, _selectedFolderId, sortOrderFlow, teamIndex) { assistantId, folderId, sortOrder, index ->
-            ConversationListQuery(assistantId, folderId, sortOrder, index.memberConversationIds)
+        combine(assistantIdFlow, _selectedFolderId, sortOrderFlow) { assistantId, folderId, sortOrder ->
+            ConversationListQuery(assistantId, folderId, sortOrder)
         }
-            .flatMapLatest { (assistantId, folderId, sortOrder, hiddenConversationIds) ->
+            // 查询输入不变就不重建 Pager；队友会话由 SQL 排除，不再依赖后到的 teamIndex
+            .distinctUntilChanged()
+            .flatMapLatest { (assistantId, folderId, sortOrder) ->
                 val paging = if (folderId == null) {
                     conversationRepo.getUnfiledConversationsOfAssistantPaging(assistantId, sortOrder)
                 } else {
@@ -121,8 +126,7 @@ class ChatDrawerVM(
                 }
                 paging.map { pagingData ->
                     pagingData
-                        // 队友会话不混进主对话列表，只从 Lead 的团队视图进入
-                        .filter { conversation -> conversation.id !in hiddenConversationIds }
+                        // 队友会话已在 SQL 里排除（agent_team_members），只从 Lead 的团队视图进入
                         .map { ConversationListItem.Item(it) }
                         .insertSeparators<ConversationListItem.Item, ConversationListItem> { before, after ->
                             when {
@@ -153,8 +157,15 @@ class ChatDrawerVM(
             }
             .cachedIn(viewModelScope)
 
-    val scrollIndex: Int get() = savedStateHandle["scrollIndex"] ?: 0
-    val scrollOffset: Int get() = savedStateHandle["scrollOffset"] ?: 0
+    /** 每个助手 + 文件夹各记一份滚动位置，键形如 "assistantId:folderId"（未归档为空串） */
+    fun scrollKey(assistantId: Uuid, folderId: Uuid?): String =
+        "$assistantId:${folderId?.toString().orEmpty()}"
+
+    fun scrollIndex(key: String): Int =
+        savedStateHandle.get<Map<String, Int>>(SCROLL_INDEX_MAP).orEmpty()[key] ?: 0
+
+    fun scrollOffset(key: String): Int =
+        savedStateHandle.get<Map<String, Int>>(SCROLL_OFFSET_MAP).orEmpty()[key] ?: 0
 
     init {
         // 助手切换时重置文件夹筛选，回到「聊天」视图，
@@ -167,9 +178,11 @@ class ChatDrawerVM(
         }
     }
 
-    fun saveScrollPosition(index: Int, offset: Int) {
-        savedStateHandle["scrollIndex"] = index
-        savedStateHandle["scrollOffset"] = offset
+    fun saveScrollPosition(key: String, index: Int, offset: Int) {
+        val indexMap = savedStateHandle.get<Map<String, Int>>(SCROLL_INDEX_MAP).orEmpty()
+        val offsetMap = savedStateHandle.get<Map<String, Int>>(SCROLL_OFFSET_MAP).orEmpty()
+        savedStateHandle[SCROLL_INDEX_MAP] = indexMap + (key to index)
+        savedStateHandle[SCROLL_OFFSET_MAP] = offsetMap + (key to offset)
     }
 
     fun selectFolder(folderId: Uuid?) {

@@ -21,11 +21,13 @@ sealed interface ProviderQuota {
 }
 
 data class UsageWindow(
-    // 0~100
+    // 已用比例 0~100；displayAsRemaining 时界面显示 100 - 该值
     val usedPercent: Double,
     // 窗口长度，未知时为 null
     val windowMinutes: Int?,
     val resetsAt: Instant?,
+    // 界面按"剩余"还是"已用"呈现；订阅类默认显示剩余，需要"已用"的调用方显式传 false
+    val displayAsRemaining: Boolean = true,
 )
 
 /**

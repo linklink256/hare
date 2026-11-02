@@ -187,6 +187,7 @@ internal val Conversation.pendingToolCalls: List<UIMessagePart.Tool>
  * 去掉还有未执行、又没法继续执行的工具调用的消息（比如还在等待审批），这样的消息发给模型会被拒绝。
  * 已经批准、拒绝或回答过的工具调用之后会继续执行，保留。只处理下标小于 [untilNode] 的节点。
  */
+// 每节点只物化选中行判断工具状态；未物化压缩行在 selectIndex 列里，currentMessage 仍只读一条消息
 internal fun Conversation.withoutUnresumableToolCalls(untilNode: Int = messageNodes.size): Conversation {
     val nodes = messageNodes.mapIndexedNotNull { index, node ->
         if (index >= untilNode) return@mapIndexedNotNull node
@@ -206,6 +207,14 @@ fun UIMessage.toMessageNode(): MessageNode {
     )
 }
 
+/** 在 [beforeNodeId] 之前插入一条消息节点；节点还不存在（本轮刚开、助手消息还没写出来）时追加到末尾。 */
+internal fun Conversation.insertMessageBefore(beforeNodeId: Uuid?, message: UIMessage): Conversation {
+    val node = message.toMessageNode()
+    val index = beforeNodeId?.let { id -> messageNodes.indexOfFirst { node -> node.id == id } } ?: -1
+    return if (index < 0) copy(messageNodes = messageNodes + node)
+    else copy(messageNodes = messageNodes.toMutableList().also { it.add(index, node) })
+}
+
 /**
  * 给还没有模型快照的消息补上快照，没有可补的消息时原样返回。
  *
@@ -215,8 +224,12 @@ fun UIMessage.toMessageNode(): MessageNode {
 fun Conversation.fillModelSnapshots(settings: Settings): Conversation {
     val models = settings.providers.flatMap { it.models }.associateBy { it.id }
     val nodes = messageNodes.map { node ->
-        val messages = node.messages.map { it.fillModelSnapshot(models) }
-        if (messages == node.messages) node else node.copy(messages = messages)
+        // 压缩行已是库里持久化的内容，不为了补快照物化它；
+        // 节点一旦被修改物化，下次保存时自然会经过这里补齐
+        if (node.messages is PackedMessageList) node else {
+            val messages = node.messages.map { it.fillModelSnapshot(models) }
+            if (messages == node.messages) node else node.copy(messages = messages)
+        }
     }
     return if (nodes == messageNodes) this else copy(messageNodes = nodes)
 }

@@ -6,10 +6,15 @@ import me.rerere.rikkahub.data.ai.ChatRequestFactory
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.repository.AgentMailboxRepository
+import me.rerere.rikkahub.data.repository.AgentMailboxStore
+import me.rerere.rikkahub.data.repository.AgentRunRepository
+import me.rerere.rikkahub.data.repository.AgentRunStore
 import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.rikkahub.service.ChatFloatingTracker
 import me.rerere.rikkahub.service.ChatNotificationManager
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.ChatServiceTeamRuntime
 import me.rerere.rikkahub.service.MediaCreationService
 import me.rerere.rikkahub.ui.floating.ChatFloatingWindows
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalSessionManager
@@ -30,7 +35,7 @@ val appModule = module {
     }
 
     single {
-        LocalTools(get(), get(), get(), get())
+        LocalTools(get(), get(), get(), get(), get())
     }
 
     single {
@@ -105,13 +110,23 @@ val appModule = module {
         )
     }
 
+    // Run 持久层：团队成员的派活/续跑都按 Run 行判态
+    single<AgentRunStore> { AgentRunRepository(get()) }
+
+    // 持久收件箱：派活（ASSIGN）与结果通知（RESULT/FAILURE/NOTICE）
+    single<AgentMailboxStore> { AgentMailboxRepository(get()) }
+
     single {
         AgentTeamService(
             teamRepository = get(),
             conversationRepository = get(),
-            chatService = get(),
+            runtime = ChatServiceTeamRuntime(get()),
             settingsStore = get(),
             teamExecutionGate = get(),
+            appScope = get(),
+            context = get(),
+            agentRunStore = get(),
+            agentMailboxStore = get(),
         )
     }
 
@@ -122,6 +137,7 @@ val appModule = module {
             usageRecorder = get(),
             chatToolFactory = get(),
             memoryRepository = get(),
+            agentTeamRepository = get(),
             templateTransformer = get(),
             workspaceRepository = get(),
         )
@@ -145,6 +161,8 @@ val appModule = module {
             folderRepository = get(),
             agentTeamRepository = get(),
             teamExecutionGate = get(),
+            agentRunStore = get(),
+            agentMailboxStore = get(),
         )
     }
 

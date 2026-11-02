@@ -1,12 +1,13 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 
 /**
  * 队友列表的分组，两个团队入口（抽屉团队视图、团队面板）共用同一套规则。
  *
  * 顺序固定为 运行中 → 等待并发 → 其他待处理/未知 → 已结束。
- * 只是归类，不重排：同组内保持仓库原本的 created_at 顺序。
+ * 组内按会话的创建/更新时间排序（跟主对话列表同一个设置）。
  */
 enum class TeamMemberSection {
     /** 有生成任务且已拿到并发名额 */
@@ -58,7 +59,10 @@ fun TeamMemberListItem.teamMemberSection(): TeamMemberSection = when {
 }
 
 /** 纯分组：单遍遍历，不排序、不订阅、不改输入。 */
-fun groupTeamMembers(members: List<TeamMemberListItem>): TeamMemberSections {
+fun groupTeamMembers(
+    members: List<TeamMemberListItem>,
+    sortOrder: ConversationSortOrder = ConversationSortOrder.UPDATE_TIME,
+): TeamMemberSections {
     val running = ArrayList<TeamMemberListItem>(members.size)
     val queued = ArrayList<TeamMemberListItem>()
     val pending = ArrayList<TeamMemberListItem>()
@@ -71,10 +75,20 @@ fun groupTeamMembers(members: List<TeamMemberListItem>): TeamMemberSections {
             TeamMemberSection.FINISHED -> finished += item
         }
     }
+    fun List<TeamMemberListItem>.orderedBySortOrder(): List<TeamMemberListItem> =
+        sortedWith(
+            compareByDescending<TeamMemberListItem> { item ->
+                when (sortOrder) {
+                    ConversationSortOrder.CREATE_TIME -> item.conversationCreateAt
+                    ConversationSortOrder.UPDATE_TIME -> item.conversationUpdateAt
+                } ?: Long.MIN_VALUE
+            }.thenByDescending { it.member.createdAt.toEpochMilli() }
+        )
+
     return TeamMemberSections(
-        running = running,
-        queued = queued,
-        pending = pending,
-        finished = finished,
+        running = running.orderedBySortOrder(),
+        queued = queued.orderedBySortOrder(),
+        pending = pending.orderedBySortOrder(),
+        finished = finished.orderedBySortOrder(),
     )
 }

@@ -150,6 +150,8 @@ private fun UsageDetails(stats: NerdStats, contextLength: Int?) {
         }
         if (stats.tps != null) UsageDetailRow(stringResource(R.string.chat_message_usage_speed), "${stats.tps.toFixed(1)} tok/s")
         if (stats.durationMillis != null) UsageDetailRow(stringResource(R.string.chat_message_usage_duration), "${(stats.durationMillis / 1000f).toFixed(1)}s")
+        // 整轮总时长：包含工具执行与等待，速度那一行仍用模型生成耗时
+        if (stats.wallClockMillis != null) UsageDetailRow(stringResource(R.string.chat_message_usage_total_duration), formatElapsed(stats.wallClockMillis))
     }
 }
 
@@ -297,6 +299,7 @@ private data class NerdStats(
     val steps: Int,
     val contextTokens: Int,
     val durationMillis: Long?,
+    val wallClockMillis: Long?,
     val tps: Float?,
 )
 
@@ -309,14 +312,25 @@ private fun UIMessage.nerdStats(usage: TokenUsage): NerdStats {
             finishedAt.toJavaLocalDateTime()
         ).toMillis()
     }?.takeIf { it > 0 }
+    // 整轮实际耗时（含工具执行、审批等待），只用于展示；速度仍按模型生成耗时算
+    val wallClockMillis = finishedAt?.let {
+        Duration.between(createdAt.toJavaLocalDateTime(), it.toJavaLocalDateTime()).toMillis()
+    }?.takeIf { it > 0 }
     return NerdStats(
         total = usage,
         lastUsage = last,
         steps = stepCount ?: 1,
         contextTokens = last.promptTokens + last.completionTokens,
         durationMillis = durationMillis,
+        wallClockMillis = wallClockMillis,
         tps = durationMillis?.let { usage.completionTokens.toFloat() / it * 1000 },
     )
 }
 
 private fun Int.exact(): String = NumberFormat.getIntegerInstance().format(this)
+
+/** 超过一分钟用 m/s 表示，避免出现 360.0s 这种读法 */
+private fun formatElapsed(millis: Long): String {
+    val seconds = millis / 1000
+    return if (seconds >= 60) "${seconds / 60}m ${seconds % 60}s" else "${(millis / 1000f).toFixed(1)}s"
+}

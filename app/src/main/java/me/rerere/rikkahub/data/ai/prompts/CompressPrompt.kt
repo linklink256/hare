@@ -39,6 +39,8 @@ internal fun buildCompressPrompt(
 
         Requirements:
         - Keep the section headings as given above, but write the content in the same language as the conversation; if unclear, use $locale
+        - Record cumulative information: carry forward still-valid decisions, constraints and evidence from any earlier summary, and state each fact only once
+        - Record the real state of every item: completed, failed, cancelled, waiting for the user, or not yet executed; never describe a failed or cancelled step as done
         - Be specific and concrete; prefer exact names and values over general descriptions
         - Do not add any explanation or commentary outside the summary
         """.trimIndent()

@@ -53,6 +53,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -62,19 +63,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -115,6 +116,121 @@ import kotlin.uuid.Uuid
 private const val TAG = "ChatList"
 private const val LoadingIndicatorKey = "LoadingIndicator"
 private const val ScrollBottomKey = "ScrollBottomKey"
+private const val LoadEarlierKey = "load-earlier"
+
+/** 历史窗口：默认只渲染最近这么多条消息，更早的靠「加载更早」一页页放开 */
+internal const val HISTORY_WINDOW_SIZE = 40
+
+/** 消息之间的间距，改成逐条消息自己补，分段之间才能无缝 */
+private val MessageItemSpacing = 12.dp
+
+/** 消息列表里的一条 item：一条消息就是一个 item */
+private data class MessageListItem(
+    val node: MessageNode,
+    val nodeIndex: Int,
+) {
+    val key: Any get() = node.id
+}
+
+/** 按节点顺序展开成列表 item（从窗口起点 [from] 开始） */
+private fun buildMessageItems(
+    nodes: List<MessageNode>,
+    from: Int = 0,
+): List<MessageListItem> {
+    val items = mutableListOf<MessageListItem>()
+    for (index in from.coerceAtLeast(0)..nodes.lastIndex) {
+        items.add(MessageListItem(nodes[index], index))
+    }
+    return items
+}
+
+/** 一条消息固定占一个 item：长消息分段虚拟化已撤掉，改为气泡内容的绘制层缓存 */
+internal fun MessageNode.lazyItemCount(loading: Boolean, isLastMessage: Boolean): Int = 1
+
+/** 消息展开后的 item 总数（不含尾部的系统提示/加载/占位 item） */
+internal fun List<MessageNode>.lazyItemCount(loading: Boolean): Int {
+    val last = lastIndex
+    return indices.sumOf { index -> this[index].lazyItemCount(loading, index == last) }
+}
+
+/** 消息下标 → 该消息第一个 item 的下标；越界时原样返回，跳转不会崩 */
+internal fun List<MessageNode>.firstItemIndexForMessage(messageIndex: Int, loading: Boolean): Int {
+    if (messageIndex !in indices) return messageIndex
+    val last = lastIndex
+    var offset = 0
+    for (index in 0 until messageIndex) {
+        offset += this[index].lazyItemCount(loading, index == last)
+    }
+    return offset
+}
+
+/**
+ * 默认窗口起点：有压缩点时以最后一个压缩点为界（压缩点之后必须全显示），
+ * 但至少保留最近一页，所以取两者的较小值。
+ */
+internal fun List<MessageNode>.defaultHistoryWindowStart(pageSize: Int = HISTORY_WINDOW_SIZE): Int {
+    if (size <= pageSize) return 0
+    val lastCheckpoint = indexOfLast { it.currentMessage.isContextCheckpoint }
+    val bySize = size - pageSize
+    return if (lastCheckpoint < 0) bySize else minOf(lastCheckpoint, bySize)
+}
+
+/** 再多看 [extraPages] 页之后的窗口起点 */
+internal fun List<MessageNode>.historyWindowStart(
+    extraPages: Int,
+    pageSize: Int = HISTORY_WINDOW_SIZE,
+): Int = (defaultHistoryWindowStart(pageSize) - extraPages * pageSize).coerceAtLeast(0)
+
+/** [from] 到 [until] 这些消息一共占几个 item（扩窗后补滚动位置用） */
+internal fun List<MessageNode>.itemCountBetween(from: Int, until: Int, loading: Boolean): Int {
+    val last = lastIndex
+    var count = 0
+    for (index in from.coerceAtLeast(0) until until.coerceAtMost(size)) {
+        count += this[index].lazyItemCount(loading, index == last)
+    }
+    return count
+}
+
+/** 消息下标 → 列表 item 下标：窗口化后要减掉窗口前的 item、补上「加载更早」那一行 */
+internal fun List<MessageNode>.itemIndexForMessage(
+    messageIndex: Int,
+    loading: Boolean,
+    extraWindowPages: Int = 0,
+): Int {
+    if (messageIndex !in indices) return messageIndex
+    val start = minOf(historyWindowStart(extraWindowPages), messageIndex)
+    val header = if (start > 0) 1 else 0
+    return header + firstItemIndexForMessage(messageIndex, loading) - firstItemIndexForMessage(start, loading)
+}
+
+/** 历史窗口多加载的页数：ChatPage 与 ChatList 共用同一份，跳转下标才不会错位 */
+internal class HistoryWindowPaging(extraPages: Int = 0) {
+    private var pages by mutableStateOf(extraPages)
+
+    val extraPages: Int get() = pages
+
+    fun loadEarlier() {
+        pages += 1
+    }
+
+    /** 把窗口扩到能显示 [messageIndex]；本来就在窗口内时返回 false */
+    fun revealMessage(nodes: List<MessageNode>, messageIndex: Int): Boolean {
+        if (messageIndex >= nodes.historyWindowStart(pages)) return false
+        val needed = ((nodes.defaultHistoryWindowStart() - messageIndex) + HISTORY_WINDOW_SIZE - 1) /
+            HISTORY_WINDOW_SIZE
+        pages = needed.coerceAtLeast(pages)
+        return true
+    }
+}
+
+/** 只存多加载的页数，恢复后窗口起点按当前消息重新算 */
+internal val HistoryWindowPagingSaver: Saver<HistoryWindowPaging, Int> = Saver(
+    save = { it.extraPages },
+    restore = { HistoryWindowPaging(it) },
+)
+
+/** 加载更早之后要补回的可见位置 */
+private data class ScrollRestore(val index: Int, val offset: Int)
 
 @Composable
 fun ChatList(
@@ -142,6 +258,9 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    // 历史窗口额外展开的页数：0 = 只渲染默认窗口（最近 40 条 / 压缩点之后）
+    extraWindowPages: Int = 0,
+    onLoadEarlier: () -> Unit = {},
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -184,29 +303,12 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                extraWindowPages = extraWindowPages,
+                onLoadEarlier = onLoadEarlier,
             )
         }
     }
 }
-
-// 顶部渐隐：消息滚到标题栏下面时逐渐透明，从状态栏一直淡出到标题栏下沿之外，保证标题可读。
-// 让内容自己变透明而不是盖一层背景色，背景图和动态渐变背景才不会被盖住。
-private fun Modifier.topFadingEdge(height: Dp): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithCache {
-        val fadeHeight = height.toPx()
-        val brush = Brush.verticalGradient(
-            0f to Color.Transparent,
-            0.6f to Color.Black.copy(alpha = 0.15f),
-            1f to Color.Black,
-            startY = 0f,
-            endY = fadeHeight,
-        )
-        onDrawWithContent {
-            drawContent()
-            drawRect(brush, size = Size(size.width, fadeHeight), blendMode = BlendMode.DstIn)
-        }
-    }
 
 @Composable
 private fun ChatListNormal(
@@ -233,11 +335,12 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    extraWindowPages: Int = 0,
+    onLoadEarlier: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
     var isRecentScroll by remember { mutableStateOf(false) }
-    val conversationUpdated by rememberUpdatedState(conversation)
     val density = LocalDensity.current
     val activity = LocalContext.current as? me.rerere.rikkahub.RouteActivity
 
@@ -294,6 +397,22 @@ private fun ChatListNormal(
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
 
+    // 历史窗口：只渲染最近一段，更早的消息等「加载更早」再放开
+    val windowStart = remember(conversation.messageNodes, extraWindowPages) {
+        conversation.messageNodes.historyWindowStart(extraWindowPages)
+    }
+    // 一条消息一个 item
+    val messageItems = remember(conversation.messageNodes, windowStart) {
+        buildMessageItems(conversation.messageNodes, windowStart)
+    }
+    // 加载更早之后按「原可见位置 + 新插入的 item 数」补回来，视线不跳
+    var pendingRestore by remember { mutableStateOf<ScrollRestore?>(null) }
+    LaunchedEffect(pendingRestore, messageItems) {
+        val restore = pendingRestore ?: return@LaunchedEffect
+        pendingRestore = null
+        state.requestScrollToItem(restore.index, restore.offset)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize(),
@@ -305,8 +424,9 @@ private fun ChatListNormal(
                     // println("is bottom = ${visibleItemsInfo.isAtBottom()}, scroll = ${state.isScrollInProgress}, can_scroll = ${state.canScrollForward}, loading = $loading")
                     if (!state.isScrollInProgress && loadingState) {
                         if (visibleItemsInfo.isAtBottom()) {
-                            state.requestScrollToItem(conversationUpdated.messageNodes.lastIndex + 10)
-                            // Log.i(TAG, "ChatList: scroll to ${conversationUpdated.messageNodes.lastIndex}")
+                            // 分段后 item 数多于消息数，按当前 item 总数滚到底
+                            state.requestScrollToItem(state.layoutInfo.totalItemsCount + 10)
+                            // Log.i(TAG, "ChatList: scroll to ${state.layoutInfo.totalItemsCount}")
                         }
                     }
                 }
@@ -330,21 +450,54 @@ private fun ChatListNormal(
                 state = state,
                 // 顶部留白放进 contentPadding，让消息可以滚动到透明标题栏下面
                 contentPadding = PaddingValues(16.dp) + PaddingValues(
-                    top = innerPadding.calculateTopPadding(),
                     bottom = 32.dp + innerPadding.calculateBottomPadding(),
                 ),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                // 间距改由每条消息的最后一段补（MessageItemSpacing），分段之间才没有缝
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                // 顶部渐隐需要给整个列表开全屏离屏层（实测 56 MiB GL），这里不挂；
+                // 消息滚到标题栏下方时按边界直接截断。
+                // 视口从标题栏下沿开始：内容不再画到标题区，标题底下只留背景（不建离屏层）
+                // 再往上收 10dp，标题栏看起来窄一点
                 modifier = Modifier
                     .fillMaxSize()
-                    .topFadingEdge(innerPadding.calculateTopPadding() + 24.dp)
+                    .padding(top = (innerPadding.calculateTopPadding() - 10.dp).coerceAtLeast(0.dp))
                     .hazeSource(state = hazeState),
             ) {
-            itemsIndexed(
-                items = conversation.messageNodes,
-                key = { index, item -> item.id },
-            ) { index, node ->
-                Column {
+            if (windowStart > 0) {
+                item(key = LoadEarlierKey) {
+                    // 一页 HISTORY_WINDOW_SIZE 条，点完保持当前可见位置
+                    val page = minOf(windowStart, HISTORY_WINDOW_SIZE)
+                    Column(modifier = Modifier.padding(bottom = MessageItemSpacing)) {
+                        TextButton(
+                            onClick = {
+                                val visibleIndex = state.firstVisibleItemIndex
+                                val visibleOffset = state.firstVisibleItemScrollOffset
+                                val added = conversation.messageNodes
+                                    .itemCountBetween(windowStart - page, windowStart, loading)
+                                pendingRestore = ScrollRestore(visibleIndex + added, visibleOffset)
+                                onLoadEarlier()
+                            },
+                        ) {
+                            Text(
+                                text = if (windowStart > page) {
+                                    "加载更早的 $page 条（还剩 $windowStart 条）"
+                                } else {
+                                    "加载更早的 $page 条"
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            items(
+                items = messageItems,
+                key = { it.key },
+            ) { item ->
+                val node = item.node
+                val index = item.nodeIndex
+                Column(modifier = Modifier.padding(bottom = MessageItemSpacing)) {
                     ListSelectableItem(
                         key = node.id,
                         onSelectChange = {
@@ -378,8 +531,10 @@ private fun ChatListNormal(
                             onShare = {
                                 selecting = true  // 使用 CoroutineScope 延迟状态更新
                                 selectedItems.clear()
-                                selectedItems.addAll(conversation.messageNodes.map { it.id }
-                                    .subList(0, conversation.messageNodes.indexOf(node) + 1))
+                                // 用 item 的节点下标，避免分段后重复做 indexOf 深比较
+                                selectedItems.addAll(
+                                    conversation.messageNodes.take(item.nodeIndex + 1).map { it.id }
+                                )
                             },
                             onUpdate = {
                                 onUpdateMessage(it)
@@ -400,17 +555,23 @@ private fun ChatListNormal(
 
             if (!loading && assistant?.allowConversationSystemPrompt == true && onConversationSystemPromptChange != null) {
                 item(key = "ConversationSystemPrompt") {
-                    ConversationSystemPromptButton(
-                        customSystemPrompt = conversation.customSystemPrompt,
-                        onSystemPromptChange = onConversationSystemPromptChange,
-                    )
+                    // 尾部间距与消息一致，替代原来的 LazyColumn 12dp 间隔
+                    Column(modifier = Modifier.padding(bottom = MessageItemSpacing)) {
+                        ConversationSystemPromptButton(
+                            customSystemPrompt = conversation.customSystemPrompt,
+                            onSystemPromptChange = onConversationSystemPromptChange,
+                        )
+                    }
                 }
             }
 
             if (loading) {
                 item(LoadingIndicatorKey) {
                     Row(
-                        modifier = Modifier.padding(8.dp),
+                        // 同上：8dp 内边距外再补 12dp 尾部间距
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .padding(bottom = MessageItemSpacing),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
