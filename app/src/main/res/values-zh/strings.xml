@@ -7,7 +7,7 @@
   <string name="about_page_version">版本</string>
   <string name="about_page_website">官网</string>
   <string name="add">添加</string>
-  <string name="app_name">RikkaHub</string>
+  <string name="app_name">Hare</string>
   <string name="asr_button_content_description">语音识别</string>
   <string name="asr_button_stop">停止</string>
   <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
@@ -80,6 +80,8 @@
   <string name="assistant_page_local_tools_javascript_engine_title">JavaScript 引擎</string>
   <string name="assistant_page_local_tools_time_info_desc">从设备获取当前日期、星期、时间和时区信息</string>
   <string name="assistant_page_local_tools_time_info_title">时间信息</string>
+  <string name="assistant_page_local_tools_hscreen_title">隐幕副屏</string>
+  <string name="assistant_page_local_tools_hscreen_desc">让 AI 在虚拟副屏里启动应用、截图、读取控件树、点击输入，不打扰你的主屏</string>
   <string name="assistant_page_local_tools_tts_desc">让AI使用您所选的TTS服务为您朗读文本</string>
   <string name="assistant_page_local_tools_tts_title">文字转语音</string>
   <string name="assistant_page_manage_memory_title">管理记忆</string>
@@ -845,7 +847,7 @@
   <string name="setting_page_search_title">搜索服务</string>
   <string name="setting_page_share">分享</string>
   <string name="setting_page_share_desc">分享本APP给朋友</string>
-  <string name="setting_page_share_text">RikkaHub - 开源安卓AI助手\n\n官网: https://rikka-ai.com/</string>
+  <string name="setting_page_share_text">Hare - 开源安卓AI助手\n\n官网: https://rikka-ai.com/</string>
   <string name="setting_page_sponsor_alert_confirm">捐赠</string>
   <string name="setting_page_sponsor_alert_desc">您已启动应用超过100次！如果您喜欢使用它，请考虑支持开发者。</string>
   <string name="setting_page_sponsor_alert_dismiss">暂不</string>
@@ -873,7 +875,7 @@
   <string name="setting_page_web_server_address_note_desc">局域网地址：使用设备 WiFi IP，同一网络中的其他设备可访问。移动数据网络下不可用。
 本地地址：使用 localhost，仅限本设备访问。
 mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过名称访问，无需知道 IP。</string>
-  <string name="setting_page_web_server_desc">允许你通过网页访问 RikkaHub</string>
+  <string name="setting_page_web_server_desc">允许你通过网页访问 Hare</string>
   <string name="setting_page_web_server_error">错误</string>
   <string name="setting_page_web_server_jwt_enable">启用身份验证</string>
   <string name="setting_page_web_server_jwt_enable_desc">访问网页界面时需要密码验证</string>
@@ -1624,6 +1626,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="chat_message_usage_total_output">总输出</string>
   <string name="chat_message_usage_speed">速度</string>
   <string name="chat_message_usage_duration">时长</string>
+  <string name="chat_message_usage_total_duration">总时长</string>
   <string name="stats_page_usage_title">Token 用量</string>
   <string name="stats_page_range_7d">7 天</string>
   <string name="stats_page_range_30d">30 天</string>
@@ -1661,6 +1664,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_provider_page_usage_failed">加载用量失败</string>
   <string name="setting_provider_page_usage_none">无用量限额</string>
   <string name="setting_provider_page_usage_resets">%1$s 重置</string>
+  <string name="setting_provider_page_usage_remaining">剩 %1$d%%</string>
   <string name="setting_provider_page_usage_limit">用量限额</string>
   <string name="setting_provider_page_usage_limit_weekly">每周限额</string>
   <string name="setting_provider_page_usage_limit_daily">每日限额</string>
