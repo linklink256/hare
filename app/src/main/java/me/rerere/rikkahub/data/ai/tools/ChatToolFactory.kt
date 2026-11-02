@@ -66,7 +66,10 @@ class ChatToolFactory(
             if (shouldUseExternalWebSearch(assistant, model)) {
                 addAll(createSearchTools(settings))
             }
-            addAll(localTools.getTools(assistant.localTools))
+            addAll(localTools.getTools(assistant.localTools, assistant.workspaceId?.toString()))
+            if (canUseMemberReportTools(assistant.enableAgentTeam, isTeamMember)) {
+                addAll(createMemberReportTools(conversationId))
+            }
             if (canUseTeamTools(assistant.enableAgentTeam, isTeamMember)) {
                 addAll(
                     createAgentTeamTools(

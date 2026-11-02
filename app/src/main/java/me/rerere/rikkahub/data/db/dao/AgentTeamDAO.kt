@@ -32,6 +32,10 @@ interface AgentTeamDAO {
     @Query("SELECT lead_conversation_id FROM agent_teams")
     fun observeLeadConversationIds(): Flow<List<String>>
 
+    /** 会话被删除时同步清掉名册行，避免留下指向已删会话的孤儿成员 */
+    @Query("DELETE FROM agent_team_members WHERE conversation_id = :conversationId")
+    suspend fun deleteMemberByConversation(conversationId: String)
+
     /** 所有队友会话 id：抽屉据此把这些会话从主列表里隐藏 */
     @Query("SELECT conversation_id FROM agent_team_members")
     fun observeMemberConversationIds(): Flow<List<String>>

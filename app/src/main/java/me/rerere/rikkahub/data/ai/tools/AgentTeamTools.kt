@@ -156,8 +156,9 @@ fun createAgentTeamTools(
             name = AgentTeamToolNames.SEND_MESSAGE,
             description = """
                 Send a message to a teammate's inbox. This is non-blocking: it returns as soon as the
-                message is queued, which does NOT mean the teammate has processed it. Use wait_agent to
-                wait for a round to finish, then list_agents to read the result.
+                message is queued, which does NOT mean the teammate has processed it. The round's result is
+                delivered to this conversation as a message when it ends, so you can end your turn instead
+                of waiting.
             """.trimIndent().replace("\n", " "),
             parameters = {
                 InputSchema.Obj(
@@ -200,9 +201,9 @@ fun createAgentTeamTools(
         Tool(
             name = AgentTeamToolNames.WAIT_AGENT,
             description = """
-                Wait until any teammate finishes its current round, then return which one finished.
-                Returns "no_progress" immediately when no teammate is currently generating — in that case
-                wake one with send_message first. Returns "timeout" if nothing finished in time.
+                Optional blocking wait: returns the teammate that finished a round. Finished rounds are
+                delivered to this conversation automatically, so prefer ending the turn over calling this.
+                Returns "no_progress" immediately when no teammate is generating; "timeout" otherwise.
             """.trimIndent().replace("\n", " "),
             parameters = {
                 InputSchema.Obj(

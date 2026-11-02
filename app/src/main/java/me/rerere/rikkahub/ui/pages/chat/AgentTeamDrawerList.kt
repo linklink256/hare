@@ -44,6 +44,7 @@ import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.model.TeamLeaderListItem
 import me.rerere.rikkahub.data.model.TeamMemberListItem
 import me.rerere.rikkahub.ui.theme.extendColors
@@ -62,12 +63,13 @@ fun ColumnScope.AgentTeamConversationList(
     /** 当前打开的会话：用于和会话列表一致的高亮 */
     selectedConversationId: Uuid?,
     listState: LazyListState,
+    sortOrder: ConversationSortOrder = ConversationSortOrder.UPDATE_TIME,
     onBack: () -> Unit,
     onClick: (Uuid) -> Unit,
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
 ) {
-    val sections = groupTeamMembers(members)
+    val sections = groupTeamMembers(members, sortOrder)
     val activeMembers = sections.running + sections.queued + sections.pending
     // 以团队为 key：换队/成员增减/秒计时变化都不会把用户展开的状态重置
     val sectionKey = leader.conversationId.toString()

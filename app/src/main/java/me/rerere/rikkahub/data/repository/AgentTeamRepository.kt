@@ -82,6 +82,10 @@ class AgentTeamRepository(
             )
         }
 
+    /** 删除会话时同步移除名册行（会话行本身可能已被删） */
+    suspend fun deleteMemberByConversation(conversationId: Uuid) =
+        agentTeamDAO.deleteMemberByConversation(conversationId.toString())
+
     // ---------- 名册 ----------
 
     suspend fun listMembers(teamId: Uuid): List<TeamMember> =
