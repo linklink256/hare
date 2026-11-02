@@ -6,11 +6,13 @@ Hare 是 RikkaHub 的分支实现（包名 `me.rerere.rikkahub.fork.hare`），�
 
 ## 分支
 
-- `feat/agent-team`：Hare 的主开发分支，所有轮次提交都落在这里。
+- `hare/main`：集成与交付线，也是当前开发分支；所有 `hare-r<versionCode>` 标签只打在它上面。
+- `hare/<主题>`：12 个内容分支（见下方「分支策略」），各自只提交本主题的文件，`--no-ff` 合并回 `hare/main`。
+- `feat/agent-team`、`backup/pre-branch-split`、`hare-r225-pre-split`：2026-11-03 按内容拆分分支前的线性历史快照（同一提交 `9d19ff82`），只读保留、不再向其提交。
 - `master`：跟随上游的基线分支。
-- `backup/pre-rollback`：回滚用的历史快照。
+- `backup/pre-rollback`：旧的回滚点。
 
-不新建、不移动、不删除上述分支；需要实验时另开工作区，不要在本仓库里改分支拓扑。
+日常开发从 `hare/main` 开 `hare/<主题>` 分支，合并一律 `--no-ff`；历史快照分支与标签只用于回查，不要移动或删除。
 
 ## 每轮交付流程
 
