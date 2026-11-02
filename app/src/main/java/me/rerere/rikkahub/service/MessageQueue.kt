@@ -16,6 +16,13 @@ data class QueuedMessage(
     val isEditing: Boolean = false,
     // Optional in-memory observer; null result means the queued message was withdrawn.
     val reply: CompletableDeferred<String?>? = null,
+    /**
+     * 本条消息对应的 Run（先持久 create 再入队）。
+     * 只承载，不在队列里生成；null 表示旧路径/尚未接线，执行时才决定。
+     */
+    val runId: Uuid? = null,
+    /** 本条消息对应的持久收件箱条目（ASSIGN）；送达确认后 ack */
+    val mailboxId: Uuid? = null,
 )
 
 data class MessageQueueState(
@@ -42,7 +49,13 @@ class MessageQueue {
     val state = mutableState.asStateFlow()
 
     @Synchronized
-    fun enqueue(parts: List<UIMessagePart>, answer: Boolean = true, reply: CompletableDeferred<String?>? = null) {
+    fun enqueue(
+        parts: List<UIMessagePart>,
+        answer: Boolean = true,
+        reply: CompletableDeferred<String?>? = null,
+        runId: Uuid? = null,
+        mailboxId: Uuid? = null,
+    ) {
         if (parts.isEmptyInputMessage()) {
             reply?.complete(null)
             return
@@ -52,6 +65,8 @@ class MessageQueue {
                 parts = parts.toList(),
                 answer = answer,
                 reply = reply,
+                runId = runId,
+                mailboxId = mailboxId,
             ),
         )
     }
