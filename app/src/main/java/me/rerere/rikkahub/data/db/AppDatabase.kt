@@ -6,6 +6,8 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import me.rerere.ai.core.TokenUsage
+import me.rerere.rikkahub.data.db.dao.AgentMailboxDAO
+import me.rerere.rikkahub.data.db.dao.AgentRunDAO
 import me.rerere.rikkahub.data.db.dao.AgentTeamDAO
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
@@ -16,9 +18,13 @@ import me.rerere.rikkahub.data.db.dao.MediaCreationDAO
 import me.rerere.rikkahub.data.db.dao.MemoryConsolidationDAO
 import me.rerere.rikkahub.data.db.dao.MemoryDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
+import me.rerere.rikkahub.data.db.dao.StreamChunkDAO
 import me.rerere.rikkahub.data.db.dao.TranslationHistoryDAO
 import me.rerere.rikkahub.data.db.dao.UsageRecordDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
+import me.rerere.rikkahub.data.db.entity.AgentMailboxEntity
+import me.rerere.rikkahub.data.db.entity.AgentRunEntity
+import me.rerere.rikkahub.data.db.entity.AgentRunEventEntity
 import me.rerere.rikkahub.data.db.entity.AgentTeamEntity
 import me.rerere.rikkahub.data.db.entity.AgentTeamMemberEntity
 import me.rerere.rikkahub.data.db.entity.AgentTeamTaskEntity
@@ -33,6 +39,7 @@ import me.rerere.rikkahub.data.db.entity.MediaCreationSessionEntity
 import me.rerere.rikkahub.data.db.entity.MemoryConsolidationEntity
 import me.rerere.rikkahub.data.db.entity.MemoryFileEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
+import me.rerere.rikkahub.data.db.entity.StreamChunkEntity
 import me.rerere.rikkahub.data.db.entity.TranslationHistoryEntity
 import me.rerere.rikkahub.data.db.entity.UsageRecordEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
@@ -61,8 +68,12 @@ import me.rerere.rikkahub.utils.JsonInstant
         AgentTeamEntity::class,
         AgentTeamMemberEntity::class,
         AgentTeamTaskEntity::class,
+        StreamChunkEntity::class,
+        AgentRunEntity::class,
+        AgentRunEventEntity::class,
+        AgentMailboxEntity::class,
     ],
-    version = 34,
+    version = 37,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -90,6 +101,9 @@ import me.rerere.rikkahub.utils.JsonInstant
         AutoMigration(from = 31, to = 32),
         AutoMigration(from = 32, to = 33),
         AutoMigration(from = 33, to = 34),
+        AutoMigration(from = 34, to = 35),
+        AutoMigration(from = 35, to = 36),
+        AutoMigration(from = 36, to = 37),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
@@ -97,6 +111,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDAO
 
     abstract fun agentTeamDao(): AgentTeamDAO
+
+    abstract fun agentRunDao(): AgentRunDAO
+
+    abstract fun agentMailboxDao(): AgentMailboxDAO
 
     abstract fun memoryDao(): MemoryDAO
 
@@ -119,6 +137,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun translationHistoryDao(): TranslationHistoryDAO
 
     abstract fun usageRecordDao(): UsageRecordDAO
+
+    abstract fun streamChunkDao(): StreamChunkDAO
 }
 
 object TokenUsageConverter {
