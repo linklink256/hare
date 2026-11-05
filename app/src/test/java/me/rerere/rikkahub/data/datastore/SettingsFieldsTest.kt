@@ -182,7 +182,8 @@ private val SAMPLE = Settings(
     agentTeamModelId = id(31),
     agentTeamMaxMembers = 12,
     agentTeamMaxTasks = 300,
-    agentTeamWaitTimeoutSeconds = 90,
+    agentTeamMaxDepth = 3,
+    agentTeamRootStepBudget = 8000,
 )
 
 private val STORED_KEYS = setOf(
@@ -241,5 +242,6 @@ private val STORED_KEYS = setOf(
     "agent_team_model",
     "agent_team_max_members",
     "agent_team_max_tasks",
-    "agent_team_wait_timeout",
+    "agent_team_max_depth",
+    "agent_team_root_step_budget",
 )

@@ -31,6 +31,7 @@ class AgentRunRulesTest {
             AgentRunState.WAITING_APPROVAL,
             AgentRunState.WAITING_INPUT,
             AgentRunState.WAITING_CHILDREN,
+            AgentRunState.WAITING_OPERATION,
             AgentRunState.PAUSED,
             AgentRunState.COMPLETED,
             AgentRunState.FAILED,
@@ -61,6 +62,14 @@ class AgentRunRulesTest {
             AgentRunState.CANCELLED,
             AgentRunState.INTERRUPTED,
         ),
+        AgentRunState.WAITING_OPERATION to setOf(
+            AgentRunState.RUNNING,
+            AgentRunState.COMPLETED,
+            AgentRunState.PAUSED,
+            AgentRunState.FAILED,
+            AgentRunState.CANCELLED,
+            AgentRunState.INTERRUPTED,
+        ),
         AgentRunState.PAUSED to setOf(
             AgentRunState.RUNNING,
             AgentRunState.QUEUED,
@@ -85,6 +94,7 @@ class AgentRunRulesTest {
         AgentRunState.WAITING_APPROVAL,
         AgentRunState.WAITING_INPUT,
         AgentRunState.WAITING_CHILDREN,
+        AgentRunState.WAITING_OPERATION,
     )
 
     private val nonTerminalStates = listOf(
@@ -93,6 +103,7 @@ class AgentRunRulesTest {
         AgentRunState.WAITING_APPROVAL,
         AgentRunState.WAITING_INPUT,
         AgentRunState.WAITING_CHILDREN,
+        AgentRunState.WAITING_OPERATION,
         AgentRunState.PAUSED,
     )
 
