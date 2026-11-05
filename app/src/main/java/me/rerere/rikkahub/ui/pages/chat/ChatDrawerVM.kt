@@ -206,7 +206,9 @@ class ChatDrawerVM(
     }
 
     private suspend fun loadTeamView(leadConversationId: Uuid) {
-        val team = agentTeamRepository.getTeamForConversation(leadConversationId)
+        // lead 优先，非 lead 回落到所属父队（与 consumeLeadForMember 同口径）
+        val team = agentTeamRepository.ownedTeam(leadConversationId)
+            ?: agentTeamRepository.getTeamForConversation(leadConversationId)
         if (team == null) {
             _teamView.value = null
             return

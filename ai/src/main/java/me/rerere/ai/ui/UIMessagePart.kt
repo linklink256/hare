@@ -195,6 +195,14 @@ sealed class UIMessagePart {
         /** Whether the tool has been executed (has output) */
         val isExecuted: Boolean get() = output.isNotEmpty()
 
+        /** 团队工具的占位输出：真结果会替换它，UI 与回填都按这个判定 */
+        val isDeferredPlaceholder: Boolean
+            get() = output.any { part ->
+                part is Text && part.text.contains("pending") &&
+                    (part.text.contains("\"final\": false") ||
+                        part.text.contains("\"final\":\"false\""))
+            }
+
         /** Whether the tool is pending user approval */
         val isPending: Boolean get() = !isExecuted && approvalState is ToolApprovalState.Pending
 

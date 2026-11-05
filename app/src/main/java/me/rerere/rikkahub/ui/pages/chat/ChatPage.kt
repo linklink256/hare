@@ -427,7 +427,12 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                            // 生成中长按 = 排到本轮之后；空闲长按仍是「只落消息、不生成」
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                answer = loadingJob != null,
+                                steer = false,
+                            )
                             scope.launch {
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }

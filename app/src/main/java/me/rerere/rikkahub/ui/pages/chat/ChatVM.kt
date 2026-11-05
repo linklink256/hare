@@ -40,6 +40,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.acceptedTaskIds
 import me.rerere.rikkahub.data.model.NodeFavoriteTarget
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
@@ -157,7 +158,9 @@ class ChatVM(
         agentTeamObservation?.cancel()
         _agentTeamPanel.value = null
         agentTeamObservation = viewModelScope.launch {
-            val team = agentTeamRepository.getTeamForConversation(_conversationId)
+            // lead 优先（成员兼子队 lead 时看自己的子队），纯成员仍回落到所属父队
+            val team = agentTeamRepository.ownedTeam(_conversationId)
+                ?: agentTeamRepository.getTeamForConversation(_conversationId)
             if (team == null) {
                 _agentTeamPanel.value = null
                 return@launch
@@ -166,8 +169,16 @@ class ChatVM(
                 agentTeamService.observeLeaderConversation(team),
                 agentTeamService.observeTimedMemberList(team.id),
                 agentTeamRepository.observeTasks(team.id),
-            ) { leader, members, tasks -> AgentTeamPanelState(team, leader, members, tasks) }
-                .collect { _agentTeamPanel.value = it }
+                agentTeamRepository.observeAcceptance(team.id),
+            ) { leader, members, tasks, acceptances ->
+                AgentTeamPanelState(
+                    team = team,
+                    leader = leader,
+                    members = members,
+                    tasks = tasks,
+                    acceptedTaskIds = acceptedTaskIds(tasks, acceptances),
+                )
+            }.collect { _agentTeamPanel.value = it }
         }
     }
 
@@ -271,11 +282,18 @@ class ChatVM(
      *
      * @param content 消息内容
      * @param answer 是否触发消息生成，如果为false，则仅添加消息到消息列表中
+     * @param steer 生成中是否插进当前轮（false 时按原样排队）
      */
-    fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
+    fun handleMessageSend(
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        steer: Boolean = true,
+    ) {
         if (content.isEmptyInputMessage()) return
 
-        chatService.sendMessage(_conversationId, content, answer)
+        viewModelScope.launch {
+            chatService.sendUserMessage(_conversationId, content, answer, steer)
+        }
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {
