@@ -28,13 +28,11 @@ import me.rerere.ui.toast.ToastType
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.ChartLineData01
-import me.rerere.hugeicons.stroke.ClipboardPaste
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.JavaScript
 import me.rerere.hugeicons.stroke.MessageQuestion
 import me.rerere.hugeicons.stroke.SmartPhone01
 import me.rerere.hugeicons.stroke.UserGroup
-import me.rerere.hugeicons.stroke.VolumeHigh
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.tools.local.LocalToolOption
 import me.rerere.rikkahub.data.model.Assistant
@@ -212,28 +210,10 @@ private fun AssistantLocalToolContent(
                 description = R.string.assistant_page_local_tools_time_info_desc,
             )
             toolItem(
-                option = LocalToolOption.Clipboard,
-                icon = HugeIcons.ClipboardPaste,
-                title = R.string.assistant_page_local_tools_clipboard_title,
-                description = R.string.assistant_page_local_tools_clipboard_desc,
-            )
-            toolItem(
-                option = LocalToolOption.Tts,
-                icon = HugeIcons.VolumeHigh,
-                title = R.string.assistant_page_local_tools_tts_title,
-                description = R.string.assistant_page_local_tools_tts_desc,
-            )
-            toolItem(
                 option = LocalToolOption.AskUser,
                 icon = HugeIcons.MessageQuestion,
                 title = R.string.assistant_page_local_tools_ask_user_title,
                 description = R.string.assistant_page_local_tools_ask_user_desc,
-            )
-            toolItem(
-                option = LocalToolOption.ScreenTime,
-                icon = HugeIcons.SmartPhone01,
-                title = R.string.assistant_page_local_tools_screen_time_title,
-                description = R.string.assistant_page_local_tools_screen_time_desc,
             )
             toolItem(
                 option = LocalToolOption.Calendar,

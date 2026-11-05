@@ -15,6 +15,15 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 
 private val CHART_STYLES = listOf("line", "bar", "scatter")
+private const val MERMAID_STYLE = "mermaid"
+private const val MAX_MERMAID_CHARS = 20_000
+// Mermaid 首行必须声明图类型，这里只做白名单校验，避免把任意文本丢给渲染器
+private val MERMAID_DIAGRAM_KEYWORDS = listOf(
+    "graph", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram", "erDiagram",
+    "journey", "gantt", "pie", "quadrantChart", "mindmap", "timeline", "gitGraph",
+    "C4Context", "sankey-beta", "xychart-beta", "block-beta", "architecture-beta",
+    "requirementDiagram", "kanban",
+)
 private val AXIS_SCALES = listOf("linear", "log")
 private const val MAX_SERIES = 12
 private const val MAX_SERIES_POINTS = 2000
@@ -23,7 +32,9 @@ private val HEX_COLOR_REGEX = Regex("^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 internal fun buildChartDisplayTool(): Tool = Tool(
     name = "chart_display",
     description = """
-        Display a line, bar, or scatter chart to the user inside the chat.
+        Display a line, bar, or scatter chart, or a Mermaid diagram, to the user inside the chat.
+        For a Mermaid diagram use style: "mermaid" and put the diagram source in 'code'
+        (first line declares the diagram type, e.g. "flowchart TD"); do not pass series or axes.
         For line and bar charts, every series must use 'values' (numbers aligned by position with x_axis.data)
         and must not use 'points'. For scatter charts, every series must use 'points' ({x, y} numbers)
         and must not use 'values'.
@@ -39,18 +50,35 @@ internal fun buildChartDisplayTool(): Tool = Tool(
             properties = buildJsonObject {
                 put("style", buildJsonObject {
                     put("type", "string")
-                    put("enum", buildJsonArray { CHART_STYLES.forEach { add(it) } })
-                    put("description", "Chart type.")
+                    put("enum", buildJsonArray {
+                        CHART_STYLES.forEach { add(it) }
+                        add(MERMAID_STYLE)
+                    })
+                    put(
+                        "description",
+                        "Display type: a chart type (line/bar/scatter) or 'mermaid' for a Mermaid diagram."
+                    )
+                })
+                put("code", buildJsonObject {
+                    put("type", "string")
+                    put(
+                        "description",
+                        "Mermaid diagram source, required when style is 'mermaid' and forbidden otherwise. " +
+                            "Do not wrap it in a code fence."
+                    )
                 })
                 put("title", buildJsonObject {
                     put("type", "string")
-                    put("description", "Chart title, shown at the top.")
+                    put("description", "Title shown at the top of the card.")
                 })
                 put("x_axis", buildAxisSchema())
                 put("y_axis", buildAxisSchema())
                 put("series", buildJsonObject {
                     put("type", "array")
-                    put("description", "One or more data series (1-$MAX_SERIES).")
+                    put(
+                        "description",
+                        "One or more data series (1-$MAX_SERIES); required for charts and forbidden for mermaid."
+                    )
                     put("items", buildJsonObject {
                         put("type", "object")
                         put("properties", buildJsonObject {
@@ -89,7 +117,7 @@ internal fun buildChartDisplayTool(): Tool = Tool(
                     })
                 })
             },
-            required = listOf("style", "series")
+            required = listOf("style")
         )
     },
     execute = { args ->
@@ -102,7 +130,14 @@ internal fun buildChartDisplayTool(): Tool = Tool(
         } else {
             buildJsonObject {
                 put("success", true)
-                put("message", "Chart displayed to the user.")
+                put(
+                    "message",
+                    if (args.jsonObject.string("style") == MERMAID_STYLE) {
+                        "Diagram displayed to the user."
+                    } else {
+                        "Chart displayed to the user."
+                    },
+                )
             }
         }
         listOf(UIMessagePart.Text(payload.toString()))
@@ -153,7 +188,11 @@ private fun JsonObject.string(key: String): String? =
 
 private fun validateChartArgs(params: JsonObject): String? {
     val style = params.string("style")
-    if (style !in CHART_STYLES) return "style must be one of ${CHART_STYLES.joinToString()}"
+    if (style == MERMAID_STYLE) return validateMermaid(params)
+    if (style !in CHART_STYLES) {
+        return "style must be one of ${(CHART_STYLES + MERMAID_STYLE).joinToString()}"
+    }
+    if ("code" in params) return "code is only used when style is 'mermaid'"
 
     val axes = mutableMapOf<String, JsonObject>()
     for (axisName in listOf("x_axis", "y_axis")) {
@@ -206,6 +245,20 @@ private fun validateChartArgs(params: JsonObject): String? {
                 return "series[$index].values has ${values.size} items but x_axis.data has ${xLabels.size}"
             }
         }
+    }
+    return null
+}
+
+private fun validateMermaid(params: JsonObject): String? {
+    for (unsupported in listOf("series", "x_axis", "y_axis")) {
+        if (unsupported in params) return "$unsupported is not supported for mermaid diagrams"
+    }
+    val code = params.string("code")?.trim().orEmpty()
+    if (code.isEmpty()) return "code is required for mermaid diagrams"
+    if (code.length > MAX_MERMAID_CHARS) return "code can contain at most $MAX_MERMAID_CHARS characters"
+    val firstLine = code.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    if (MERMAID_DIAGRAM_KEYWORDS.none { firstLine.startsWith(it) }) {
+        return "code must start with a Mermaid diagram type such as 'flowchart TD' or 'sequenceDiagram'"
     }
     return null
 }

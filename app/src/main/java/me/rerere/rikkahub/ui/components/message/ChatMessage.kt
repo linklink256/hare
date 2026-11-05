@@ -90,6 +90,7 @@ import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.richtext.Mermaid
 import me.rerere.rikkahub.ui.components.richtext.SelectableContent
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
@@ -396,8 +397,17 @@ private fun MessagePartsBlock(
             }
 
             is MessagePartBlock.ChartBlock -> key(block.index) {
-                val spec = remember(block.tool.input) { ChartSpec.fromJson(block.tool.inputAsJson()) }
-                spec?.let { ChartCard(spec = it) }
+                val mermaid = remember(block.tool.input) { block.tool.mermaidCodeOrNull() }
+                if (mermaid != null) {
+                    Mermaid(
+                        code = mermaid,
+                        title = remember(block.tool.input) { block.tool.mermaidTitleOrNull() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    val spec = remember(block.tool.input) { ChartSpec.fromJson(block.tool.inputAsJson()) }
+                    spec?.let { ChartCard(spec = it) }
+                }
             }
 
             is MessagePartBlock.ContentBlock -> key(block.index) {

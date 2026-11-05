@@ -4,6 +4,7 @@ import androidx.compose.ui.util.fastForEachIndexed
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.utils.JsonInstant
 
@@ -81,6 +82,24 @@ fun List<UIMessagePart>.groupMessageParts(): List<MessagePartBlock> {
     }
     flushThinkingSteps()
     return result
+}
+
+/** mermaid 图表的标题；没传时返回 null。 */
+internal fun UIMessagePart.Tool.mermaidTitleOrNull(): String? {
+    if (toolName != CHART_DISPLAY_TOOL_NAME) return null
+    val input = inputAsJson() as? JsonObject ?: return null
+    val style = (input["style"] as? JsonPrimitive)?.contentOrNull
+    if (style != "mermaid") return null
+    return (input["title"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+}
+
+/** mermaid 图表的源码；不是成功展示的 mermaid 调用时返回 null。 */
+internal fun UIMessagePart.Tool.mermaidCodeOrNull(): String? {
+    if (toolName != CHART_DISPLAY_TOOL_NAME) return null
+    val input = inputAsJson() as? JsonObject ?: return null
+    val style = (input["style"] as? JsonPrimitive)?.contentOrNull
+    if (style != "mermaid") return null
+    return (input["code"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 }
 
 private fun UIMessagePart.Tool.isSuccessfulChartDisplay(): Boolean {

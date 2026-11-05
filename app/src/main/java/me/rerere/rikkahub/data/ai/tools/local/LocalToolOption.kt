@@ -13,6 +13,7 @@ sealed class LocalToolOption {
     @SerialName("time_info")
     data object TimeInfo : LocalToolOption()
 
+    // 以下三个工具已下线，不再注册也不再出现在设置里；保留常量只为解析旧配置不报错
     @Serializable
     @SerialName("clipboard")
     data object Clipboard : LocalToolOption()
