@@ -413,6 +413,9 @@
   <string name="menu_page_evening_greeting">Good evening\uD83D\uDC4B</string>
   <string name="menu_page_morning_greeting">Good morning\uD83D\uDC4B</string>
   <string name="menu_page_night_greeting">It\'s late, take care\uD83D\uDC4B</string>
+  <string name="mermaid_zoom_fit">Fit</string>
+  <string name="mermaid_zoom_in">Zoom in</string>
+  <string name="mermaid_zoom_out">Zoom out</string>
   <string name="mermaid_export">Export</string>
   <string name="mermaid_export_failed">Export failed</string>
   <string name="mermaid_export_success">Export successful</string>
@@ -784,6 +787,7 @@
   <string name="setting_model_page_ocr_model">OCR Model</string>
   <string name="setting_model_page_ocr_model_desc">Model used for optical character recognition on images</string>
   <string name="setting_model_page_ocr_prompt_vars">Variables: Image data: {images}</string>
+  <string name="setting_model_page_compression_prompt_vars">Variables: Language: {locale}</string>
   <string name="setting_model_page_prompt">Prompt</string>
   <string name="setting_model_page_reset_to_default">Reset to default</string>
   <string name="setting_model_page_enable_suggestion">Enable Chat Suggestions</string>
@@ -1155,6 +1159,7 @@
   <string name="setting_model_page_prompt_title">Title Generation</string>
   <string name="setting_model_page_prompt_suggestion">Chat Reply Suggestions</string>
   <string name="setting_model_page_prompt_ocr">OCR Recognition</string>
+  <string name="setting_model_page_prompt_compression">Compression Prompt</string>
   <string name="setting_display_page_bubble_opacity_title">Bubble Opacity</string>
   <string name="setting_provider_page_include_history_reasoning">Include History Reasoning</string>
   <string name="assistant_page_gradient_background">Gradient Background</string>
@@ -1374,8 +1379,8 @@
   <string name="setting_display_page_background_effect_glass">Glass</string>
   <string name="skills_page_search_placeholder">Search skills</string>
   <string name="skills_page_search_no_result">No matching skills</string>
-  <string name="assistant_page_local_tools_chart_display_title">Chart Display</string>
-  <string name="assistant_page_local_tools_chart_display_desc">Let the AI display line, bar, and scatter charts</string>
+  <string name="assistant_page_local_tools_chart_display_title">Chart Tool</string>
+  <string name="assistant_page_local_tools_chart_display_desc">Let the AI display line, bar, and scatter charts and Mermaid diagrams</string>
   <string name="chat_message_tool_chart_display">Display chart</string>
   <string name="chat_message_tool_chart_display_with_title">Display chart: %1$s</string>
   <string name="error_fast_model_not_found">Fast model not found. Please select one in settings.</string>

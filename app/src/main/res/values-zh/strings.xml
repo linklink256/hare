@@ -412,6 +412,9 @@
   <string name="menu_page_evening_greeting">晚上好\uD83D\uDC4B</string>
   <string name="menu_page_morning_greeting">早上好\uD83D\uDC4B</string>
   <string name="menu_page_night_greeting">夜深了，注意休息\uD83D\uDC4B</string>
+  <string name="mermaid_zoom_fit">适应窗口</string>
+  <string name="mermaid_zoom_in">放大</string>
+  <string name="mermaid_zoom_out">缩小</string>
   <string name="mermaid_export">导出</string>
   <string name="mermaid_export_failed">导出失败</string>
   <string name="mermaid_export_success">导出成功</string>
@@ -775,6 +778,7 @@
   <string name="setting_model_page_ocr_model">OCR 模型</string>
   <string name="setting_model_page_ocr_model_desc">用于图像光学字符识别的模型</string>
   <string name="setting_model_page_ocr_prompt_vars">变量：图像数据：{images}</string>
+  <string name="setting_model_page_compression_prompt_vars">变量：语言：{locale}</string>
   <string name="setting_model_page_prompt">提示词</string>
   <string name="setting_model_page_reset_to_default">重置为默认</string>
   <string name="setting_model_page_suggestion_model">聊天建议模型</string>
@@ -1134,6 +1138,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_model_page_prompt_title">标题生成</string>
   <string name="setting_model_page_prompt_suggestion">聊天回复建议</string>
   <string name="setting_model_page_prompt_ocr">OCR识别</string>
+  <string name="setting_model_page_prompt_compression">压缩提示词</string>
   <string name="setting_display_page_bubble_opacity_title">气泡不透明度</string>
   <string name="setting_provider_page_include_history_reasoning">回传历史思考过程</string>
   <string name="setting_model_page_fast_model">快速模型</string>
@@ -1375,8 +1380,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_terminal_no_tabs">没有打开的终端标签页</string>
   <string name="skills_page_search_placeholder">搜索技能</string>
   <string name="skills_page_search_no_result">没有匹配的技能</string>
-  <string name="assistant_page_local_tools_chart_display_title">图表显示</string>
-  <string name="assistant_page_local_tools_chart_display_desc">让 AI 显示折线图、柱状图和散点图</string>
+  <string name="assistant_page_local_tools_chart_display_title">图表工具</string>
+  <string name="assistant_page_local_tools_chart_display_desc">让 AI 显示折线图、柱状图、散点图和 Mermaid 图表</string>
   <string name="chat_message_tool_chart_display">显示图表</string>
   <string name="chat_message_tool_chart_display_with_title">显示图表：%1$s</string>
   <string name="error_fast_model_not_found">未找到快速模型。请在设置中选择一个。</string>
