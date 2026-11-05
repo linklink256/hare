@@ -1804,6 +1804,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="agent_team_idle">空闲</string>
     <string name="agent_team_open">打开会话</string>
     <string name="agent_team_blocked">被阻塞</string>
+    <string name="agent_team_accepted">已验收</string>
+    <string name="agent_team_pending_acceptance">待验收</string>
     <string name="agent_team_finished">已结束</string>
     <string name="agent_team_open_team">进入团队</string>
     <string name="agent_team_back_to_chats">返回会话列表</string>
@@ -1813,12 +1815,16 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="setting_agent_team_max_members_desc">同时运行的队友数量上限（不含创建失败与已结束的），1–32</string>
     <string name="setting_agent_team_max_tasks">任务板任务上限</string>
     <string name="setting_agent_team_max_tasks_desc">共享任务板上最多几个任务，1–1024</string>
-    <string name="setting_agent_team_wait_timeout">等待队友超时（秒）</string>
-    <string name="setting_agent_team_wait_timeout_desc">wait_agent 的默认等待秒数，10–600</string>
+    <string name="setting_agent_team_max_depth">嵌套深度</string>
+    <string name="setting_agent_team_max_depth_desc">1–3。大于 1 时队友可以自己建队</string>
+    <string name="setting_agent_team_root_step_budget">根团队步数总账（所有层共用）</string>
+    <string name="setting_agent_team_root_step_budget_desc">256–100000</string>
     <string name="setting_agent_team_reset">恢复默认</string>
-    <string name="setting_agent_team_reset_desc">队友 8 个、任务板 256 条、等待 120 秒</string>
+    <string name="setting_agent_team_reset_desc">队友 8 个、任务板 256 条、等待 120 秒、嵌套深度 1、步数总账 4096</string>
     <string name="setting_agent_team_applies_next_team">同时运行上限改完立即生效；任务板上限对之后新建的团队生效。</string>
     <string name="setting_agent_team_model">队友默认模型</string>
     <string name="setting_agent_team_model_desc">队友使用该模型；联网/MCP/技能等仍沿用领队助手</string>
     <string name="setting_agent_team_model_follow">跟随领队助手</string>
+  <string name="chat_message_tool_waiting_teammate">等待 %1$s 回报...</string>
+  <string name="chat_message_tool_report_from">%1$s 的回报</string>
 </resources>
