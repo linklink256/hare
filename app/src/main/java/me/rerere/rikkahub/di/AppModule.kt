@@ -5,11 +5,20 @@ import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.ChatRequestFactory
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.repository.AgentMailboxRepository
 import me.rerere.rikkahub.data.repository.AgentMailboxStore
 import me.rerere.rikkahub.data.repository.AgentRunRepository
 import me.rerere.rikkahub.data.repository.AgentRunStore
+import me.rerere.rikkahub.data.repository.AgentTeamRepository
+import me.rerere.rikkahub.data.repository.ToolOperationRepository
+import me.rerere.rikkahub.data.repository.OperationStore
+import me.rerere.rikkahub.data.repository.RuntimeOperationRepository
+import me.rerere.rikkahub.data.repository.ToolOperationStore
+import me.rerere.rikkahub.runtime.DefaultRunCoordinator
+import me.rerere.rikkahub.runtime.RunCoordinator
 import me.rerere.rikkahub.service.AgentTeamService
 import me.rerere.rikkahub.service.ChatFloatingTracker
 import me.rerere.rikkahub.service.ChatNotificationManager
@@ -106,6 +115,7 @@ val appModule = module {
             skillManager = get(),
             workspaceRepository = get(),
             agentTeamRepository = get(),
+            operationInbox = get(),
             agentTeamService = lazy { get() },
         )
     }
@@ -115,6 +125,15 @@ val appModule = module {
 
     // 持久收件箱：派活（ASSIGN）与结果通知（RESULT/FAILURE/NOTICE）
     single<AgentMailboxStore> { AgentMailboxRepository(get()) }
+
+    // 工具操作检查点：DAO 仍由 Room 提供，这里只额外暴露这一层给 store
+    single { get<AppDatabase>().toolOperationDao() }
+    single<ToolOperationStore> { ToolOperationRepository(get()) }
+    // R2：持久 operation（operation 行 + 副作用检查点同事务）
+    single<OperationStore> { RuntimeOperationRepository(get()) }
+    single { me.rerere.rikkahub.runtime.OperationRecorder(get()) }
+    single { me.rerere.rikkahub.runtime.OperationRuntime(get()) }
+    single { me.rerere.rikkahub.runtime.OperationInbox(get()) }
 
     single {
         AgentTeamService(
@@ -127,6 +146,7 @@ val appModule = module {
             context = get(),
             agentRunStore = get(),
             agentMailboxStore = get(),
+            operationRuntime = get(),
         )
     }
 
@@ -140,10 +160,23 @@ val appModule = module {
             agentTeamRepository = get(),
             templateTransformer = get(),
             workspaceRepository = get(),
+            operationInbox = get(),
         )
     }
 
     single { me.rerere.rikkahub.service.TeamExecutionGate() }
+
+    // R1 单会话执行串行边界：受跟踪/成员执行统一经协调器准入
+    single<RunCoordinator> {
+        DefaultRunCoordinator(
+            runStore = get(),
+            gate = get(),
+            rootTeamId = { teamId ->
+                get<AgentTeamRepository>().getTeam(teamId)?.rootTeamId ?: teamId
+            },
+            memberLimit = { get<SettingsStore>().awaitLoaded().agentTeamMaxMembers },
+        )
+    }
 
     single {
         ChatService(
@@ -161,8 +194,14 @@ val appModule = module {
             folderRepository = get(),
             agentTeamRepository = get(),
             teamExecutionGate = get(),
+            runCoordinator = get(),
             agentRunStore = get(),
             agentMailboxStore = get(),
+            toolOperationStore = get(),
+            operationStore = get(),
+            operationRecorder = get(),
+            operationRuntime = get(),
+            operationInbox = get(),
         )
     }
 

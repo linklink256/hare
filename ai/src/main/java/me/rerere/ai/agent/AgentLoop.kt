@@ -40,8 +40,15 @@ internal class AgentLoop(
     // 本轮的助手消息；新的一轮在第一次请求模型时才创建
     private var message: UIMessage?
 
-    // 运行中被插进来的消息（队友结果等），每一步接在当前助手消息之后发给模型
-    private var steers: List<UIMessage> = emptyList()
+    // 还没送达的插话：只在下一步请求末尾作为 user 消息出现一次
+    private var pendingSteers: List<UIMessage> = emptyList()
+
+    // 已送达的插话：之后放进历史前缀，不能再追加到尾部，否则模型每一步都看到同一条新 user 消息
+    private var deliveredSteers: List<UIMessage> = emptyList()
+
+    // 连续相同工具调用的步数：模型自己反复调同一个工具时兜底，别把步数预算烧光
+    private var lastToolSignature: String? = null
+    private var sameToolSteps = 0
 
     init {
         val last = request.messages.lastOrNull()
@@ -61,11 +68,33 @@ internal class AgentLoop(
             val current = message
             // 收尾前再看一眼插话：有新插话就继续这一轮，不提前完成
             val fresh = hooks.drainSteer()
-            if (fresh.isNotEmpty()) steers = steers + fresh
+            if (fresh.isNotEmpty()) pendingSteers = pendingSteers + fresh
             if (current != null && current.getTools().any { !it.isExecuted }) {
-                val pending = requestApprovals(current)
-                if (pending.isNotEmpty()) return finish(AgentFinishReason.AwaitingApproval(pending))
-                executeTools()
+                val batch = current.getTools().filter { !it.isExecuted }
+                if (pendingSteers.isNotEmpty()) {
+                    // 插话已在等：旧调用不再审批/执行，收口后直接让模型重新判断
+                    supersedeRemainingTools(batch)
+                    lastToolSignature = null
+                    sameToolSteps = 0
+                } else {
+                    val pending = requestApprovals(current)
+                    if (pending.isNotEmpty()) return finish(AgentFinishReason.AwaitingApproval(pending))
+                    // 同一条消息里把同一个调用复制 N 份也算无进展：先收尾再执行，避免重复副作用
+                    val duplicated = batch.groupingBy { "${it.toolName}:${it.input}" }.eachCount().values.maxOrNull() ?: 0
+                    if (duplicated >= STALL_LIMIT) return finish(AgentFinishReason.Stalled)
+                    val superseded = executeTools()
+                    if (superseded) {
+                        // 带插话的批不算无进展：清掉旧签名，别让 Stalled 抢先收尾
+                        lastToolSignature = null
+                        sameToolSteps = 0
+                    } else {
+                        // 这一批工具的名字与入参和上一步完全一样：算无进展，连续几次就收尾
+                        val signature = batch.joinToString("\u0001") { "${it.toolName}:${it.input}" }
+                        sameToolSteps = if (signature == lastToolSignature) sameToolSteps + 1 else 0
+                        lastToolSignature = signature
+                        if (sameToolSteps >= STALL_LIMIT) return finish(AgentFinishReason.Stalled)
+                    }
+                }
             } else if (current != null && steps > 0 && fresh.isEmpty()) {
                 return finish(AgentFinishReason.Completed)
             }
@@ -93,9 +122,18 @@ internal class AgentLoop(
         return updated.getTools().filter { it.isPending }.mapTo(LinkedHashSet()) { it.toolCallId }
     }
 
+    private companion object {
+        // 正常任务不会连续 6 步发同一批一模一样的工具调用
+        const val STALL_LIMIT = 6
+    }
+
     private suspend fun generateStep() {
+        // 请求前最后再看一眼插话：缩小最后一个工具与这次请求之间的窗口
+        val fresh = hooks.drainSteer()
+        if (fresh.isNotEmpty()) pendingSteers = pendingSteers + fresh
         val current = message
-        val step = hooks.prepareStep((if (current == null) history else history + current) + steers)
+        val messages = history + deliveredSteers + listOfNotNull(current) + pendingSteers
+        val step = hooks.prepareStep(messages)
         val params = step.params.copy(tools = request.tools)
         val base = current ?: UIMessage(
             role = MessageRole.ASSISTANT,
@@ -108,6 +146,11 @@ internal class AgentLoop(
             generate(step.messages, params, base)
         }
         update(hooks.finishStep(generated, newPartsFrom = base.parts.size).copy(finishedAt = now()))
+        // 这一步已经把插话带给模型；之后它只作为历史前缀，不再重复追加在末尾
+        if (pendingSteers.isNotEmpty()) {
+            deliveredSteers = deliveredSteers + pendingSteers
+            pendingSteers = emptyList()
+        }
     }
 
     private suspend fun stream(
@@ -185,17 +228,42 @@ internal class AgentLoop(
         return generated
     }
 
-    // 按调用顺序逐个执行，每执行完一个就更新一次，中途取消时已经执行的结果不会丢
-    private suspend fun executeTools() {
+    // 按调用顺序逐个执行；每个工具完成后检查插话，有插话就收口剩余调用并返回 true
+    private suspend fun executeTools(): Boolean {
         val tools = checkNotNull(message).getTools().filter { !it.isExecuted }
-        for (tool in tools) {
+        for ((index, tool) in tools.withIndex()) {
             // 只给真正运行的工具计时；开始时先写一次，界面才能在执行中实时显示耗时
             val runs = tool.approvalState == ToolApprovalState.Auto || tool.approvalState == ToolApprovalState.Approved
             if (runs) updateTool(tool.toolCallId) { it.copy(startedAt = Clock.System.now(), finishedAt = null) }
+            // 副作用检查点：只给真正运行的工具记；hook 失败不能拖垮工具执行，取消仍要向上传播
+            if (runs) runCatching { hooks.onToolStarted(tool.toolCallId, tool.toolName, tool.input) }
+                .onFailure { if (it is CancellationException) throw it }
             val output = execute(tool)
+            if (runs) runCatching {
+                hooks.onToolFinished(
+                    tool.toolCallId,
+                    output.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text },
+                    null,
+                )
+            }.onFailure { if (it is CancellationException) throw it }
             updateTool(tool.toolCallId) {
                 it.copy(output = output, finishedAt = if (runs) Clock.System.now() else it.finishedAt)
             }
+            // 工具期间到达的插话：剩余调用不再盲跑，补明确结果后由下一次请求重新评估
+            val fresh = hooks.drainSteer()
+            if (fresh.isNotEmpty()) {
+                pendingSteers = pendingSteers + fresh
+                supersedeRemainingTools(tools.drop(index + 1))
+                return true
+            }
+        }
+        return false
+    }
+
+    // 被插话取代的调用不执行，但必须补 output，避免留下没有结果的 tool_call
+    private suspend fun supersedeRemainingTools(tools: List<UIMessagePart.Tool>) {
+        for (tool in tools) {
+            updateTool(tool.toolCallId) { it.copy(output = supersededOutput()) }
         }
     }
 
@@ -222,7 +290,9 @@ internal class AgentLoop(
         }
 
     private suspend fun runTool(tool: UIMessagePart.Tool): List<UIMessagePart> = try {
-        val definition = findTool(tool.toolName) ?: error("Tool ${tool.toolName} not found")
+        // 旧历史里可能留下已下线的工具调用（如 wait_agent）：给模型一个错误结果，不要让整轮崩掉
+        val definition = findTool(tool.toolName)
+            ?: return errorOutput("Tool ${tool.toolName} is not available in this conversation; do not call it again.")
         val args = runCatching { json.parseToJsonElement(tool.input.ifBlank { "{}" }) }
             .getOrElse { error("Invalid tool arguments JSON for ${tool.toolName}: ${it.message}") }
         definition.execute(args).ifEmpty { listOf(UIMessagePart.Text(EMPTY_TOOL_OUTPUT)) }
@@ -249,6 +319,14 @@ internal class AgentLoop(
         events.emit(AgentEvent.Finished(checkNotNull(message), reason))
     }
 }
+
+// 插话到达时还没执行的调用：明确告诉模型没跑，让它带着新指令重新判断
+private fun supersededOutput(): List<UIMessagePart> = listOf(
+    UIMessagePart.Text(
+        """{"status":"superseded","error":"A new user message arrived while the tool batch """ +
+            """was running; this call was not executed. Re-evaluate before calling it again."}"""
+    )
+)
 
 private fun errorOutput(error: String): List<UIMessagePart> =
     listOf(UIMessagePart.Text(buildJsonObject { put("error", error) }.toString()))

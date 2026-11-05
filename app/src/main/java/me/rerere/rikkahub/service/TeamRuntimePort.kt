@@ -46,6 +46,30 @@ interface TeamRuntimePort {
      */
     suspend fun notice(conversationId: Uuid, content: List<UIMessagePart>, messageId: Uuid? = null)
 
+    /**
+     * 领队给正在生成的会话插话：忙则插一条可见节点并落 STEER，下一步请求带上它。
+     * 空闲/等审批/续写这类没有安全插入锚点的轮次返回 false，调用方改走普通派活。
+     */
+    suspend fun steer(conversationId: Uuid, content: List<UIMessagePart>): Boolean
+
+    /**
+     * 把迟到的队友结果写回当初那条 await_teammate 调用的 output，并在会话空闲时自动续跑。
+     * 不新增用户消息；会话正忙时不做任何改动并返回 false（调用方应把结果留在 mailbox）。
+     */
+    suspend fun completeDeferredTool(
+        conversationId: Uuid,
+        toolName: String,
+        handle: String,
+        output: List<UIMessagePart>,
+        deliveryKey: String? = null,
+    ): Boolean
+
+    /**
+     * 新路径唤醒：事件已留在 mailbox，这里只唤起一次会话让模型自己调 receive_events。
+     * 不写转录、不 ACK；会话忙/暂停/用户刚停时由 ChatService 的既有限流决定不启动。
+     */
+    suspend fun notifyInbox(conversationId: Uuid, deliveryKey: String)
+
     /** 按消息 id 查转录里是否已有这条通知（用于重投去重） */
     suspend fun messageById(conversationId: Uuid, messageId: Uuid): UIMessage?
 

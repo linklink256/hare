@@ -215,6 +215,15 @@ interface AgentRunStore {
     /** 全历史：诊断/管理用途，**不是热路径**；常规判态用 [latestForConversation]。 */
     suspend fun listForConversation(conversationId: Uuid): List<AgentRun>
 
+    /** 同一任务的历次尝试（预算总账用）；按创建时间升序，调用方自己求和。 */
+    suspend fun listForTask(taskId: Uuid): List<AgentRun>
+
+    /** 全部后代 Run（按 `parentRunId` 递归展开）；取消级联与树状诊断用，不是热路径。 */
+    suspend fun listDescendantRuns(runId: Uuid): List<AgentRun>
+
+    /** 某批团队下仍非终态的 Run（父 Run 取消后按根团队级联取消用）。 */
+    suspend fun listLiveRunsByTeams(teamIds: Collection<Uuid>): List<AgentRun>
+
     /** 全历史观察：诊断/管理用途，**不是热路径**；团队投影用 [observeLatestForTeam]。 */
     fun observeConversation(conversationId: Uuid): Flow<List<AgentRun>>
 
@@ -519,6 +528,18 @@ class AgentRunRepository(
     override suspend fun listForConversation(conversationId: Uuid): List<AgentRun> =
         dao.listRunsByConversation(conversationId.toString()).map { it.toModel() }
 
+    override suspend fun listForTask(taskId: Uuid): List<AgentRun> =
+        dao.listRunsByTask(taskId.toString()).map { it.toModel() }
+
+    override suspend fun listDescendantRuns(runId: Uuid): List<AgentRun> =
+        dao.listDescendantRuns(runId.toString()).map { it.toModel() }
+
+    override suspend fun listLiveRunsByTeams(teamIds: Collection<Uuid>): List<AgentRun> {
+        // 空集合直接返回，不依赖 Room 对空 IN 列表的占位处理
+        if (teamIds.isEmpty()) return emptyList()
+        return dao.listLiveRunsByTeams(teamIds.map { it.toString() }).map { it.toModel() }
+    }
+
     override fun observeConversation(conversationId: Uuid): Flow<List<AgentRun>> =
         dao.observeRunsByConversation(conversationId.toString())
             .map { list -> list.map { it.toModel() } }
@@ -717,6 +738,9 @@ class AgentRunRepository(
         updatedAt = Instant.ofEpochMilli(updatedAt),
         startedAt = startedAt?.let(Instant::ofEpochMilli),
         finishedAt = finishedAt?.let(Instant::ofEpochMilli),
+        executionGeneration = executionGeneration,
+        reservedSteps = reservedSteps,
+        cancelRequestedAt = cancelRequestedAt?.let(Instant::ofEpochMilli),
     )
 
     private fun AgentRun.toEntity(): AgentRunEntity = AgentRunEntity(
@@ -742,6 +766,9 @@ class AgentRunRepository(
         updatedAt = updatedAt.toEpochMilli(),
         startedAt = startedAt?.toEpochMilli(),
         finishedAt = finishedAt?.toEpochMilli(),
+        executionGeneration = executionGeneration,
+        reservedSteps = reservedSteps,
+        cancelRequestedAt = cancelRequestedAt?.toEpochMilli(),
     )
 
     private fun AgentRunTeamSummaryRow.toSummary(): AgentRunTeamSummary = AgentRunTeamSummary(
@@ -768,6 +795,9 @@ class AgentRunRepository(
         toState = toState?.let { runCatching { AgentRunState.valueOf(it) }.getOrNull() },
         reason = reason,
         stepsUsed = stepsUsed,
+        operationId = operationId?.let { Uuid.parse(it) },
+        stepId = stepId?.let { Uuid.parse(it) },
+        stepNo = stepNo,
         at = Instant.ofEpochMilli(createdAt),
     )
 }

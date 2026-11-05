@@ -38,6 +38,7 @@ sealed interface RunResume {
 /** Run 生命周期纯规则：无 Android 依赖，可直接被 run_tests 覆盖。 */
 object AgentRunLifecycle {
     const val STEP_LIMIT_REASON = "step_limit"
+    const val STALLED_REASON = "stalled"
     const val CANCELLED_REASON = "cancelled"
     const val FAILED_REASON = "failed"
 
@@ -56,15 +57,21 @@ object AgentRunLifecycle {
         return baseline.runStepsUsed + delta
     }
 
-    /** 只映射 finish reason；状态迁移仍由调用方在最终转录 flush 之后提交 */
-    fun stateFor(reason: AgentFinishReason): AgentRunState = when (reason) {
-        AgentFinishReason.Completed -> AgentRunState.COMPLETED
+    /**
+     * 只映射 finish reason；状态迁移仍由调用方在最终转录 flush 之后提交。
+     * [hasOpenOperations] 为真且本回合正常完成时进入 WAITING_OPERATION：领队不悬挂也不假装完成。
+     */
+    fun stateFor(reason: AgentFinishReason, hasOpenOperations: Boolean = false): AgentRunState = when (reason) {
+        AgentFinishReason.Completed ->
+            if (hasOpenOperations) AgentRunState.WAITING_OPERATION else AgentRunState.COMPLETED
         is AgentFinishReason.AwaitingApproval -> AgentRunState.WAITING_APPROVAL
         AgentFinishReason.StepLimitReached -> AgentRunState.PAUSED
+        AgentFinishReason.Stalled -> AgentRunState.FAILED
     }
 
     fun reasonFor(reason: AgentFinishReason): String? = when (reason) {
         AgentFinishReason.StepLimitReached -> STEP_LIMIT_REASON
+        AgentFinishReason.Stalled -> STALLED_REASON
         else -> null
     }
 
@@ -111,7 +118,7 @@ object AgentRunLifecycle {
         AgentRunState.QUEUED -> RunProjection(true, false, false, false)
         AgentRunState.RUNNING -> RunProjection(true, true, false, false)
         AgentRunState.WAITING_APPROVAL -> RunProjection(true, false, true, false)
-        AgentRunState.WAITING_INPUT, AgentRunState.WAITING_CHILDREN ->
+        AgentRunState.WAITING_INPUT, AgentRunState.WAITING_CHILDREN, AgentRunState.WAITING_OPERATION ->
             RunProjection(true, false, false, false)
         AgentRunState.PAUSED -> RunProjection(false, false, false, true)
         AgentRunState.COMPLETED, AgentRunState.FAILED,

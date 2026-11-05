@@ -28,6 +28,9 @@ enum class AgentRunState {
     /** 等子 Run 结束：非终态，父不占模型名额 */
     WAITING_CHILDREN,
 
+    /** 本回合已结束、仍有已受理的后台 operation 等消费：非终态，释放执行名额，可被事件唤醒 */
+    WAITING_OPERATION,
+
     /** 暂停（步数上限/预算收紧等），需显式续跑 */
     PAUSED,
 
@@ -65,6 +68,12 @@ data class AgentRunEvent(
     val reason: String? = null,
     /** 仅 `STEP_PROGRESS` 事件填写：该次提交后的累计步数 */
     val stepsUsed: Int? = null,
+    /** 事件关联的 operation；R2 零写入，R3 写 OPERATION_* 事件时才填。 */
+    val operationId: Uuid? = null,
+    /** 一次模型请求快照的 id；R2 拿不到真实 step 身份，恒空。 */
+    val stepId: Uuid? = null,
+    /** 本次 Run 内第 n 次模型请求（1-based）；R2 恒空。 */
+    val stepNo: Int? = null,
     @Serializable(with = InstantSerializer::class)
     val at: Instant = Instant.now(),
 )
@@ -121,6 +130,13 @@ data class AgentRun(
     /** 进入终态的时刻，只在终态迁移时写 */
     @Serializable(with = InstantSerializer::class)
     val finishedAt: Instant? = null,
+    /** 逻辑代次：R2 恒 0（只存不递增），取消/替代时才变（R4）。 */
+    val executionGeneration: Long = 0L,
+    /** 预算预留步数；R5 才由 ledger 写。 */
+    val reservedSteps: Int = 0,
+    /** 取消请求落库时刻；R4 才写。 */
+    @Serializable(with = InstantSerializer::class)
+    val cancelRequestedAt: Instant? = null,
 ) {
     val isTerminal: Boolean get() = AgentRunRules.isTerminal(state)
 }
@@ -229,6 +245,7 @@ object AgentRunRules {
             AgentRunState.WAITING_APPROVAL,
             AgentRunState.WAITING_INPUT,
             AgentRunState.WAITING_CHILDREN,
+            AgentRunState.WAITING_OPERATION,
             AgentRunState.PAUSED,
             AgentRunState.COMPLETED,
             AgentRunState.FAILED,
@@ -254,6 +271,15 @@ object AgentRunRules {
         AgentRunState.WAITING_CHILDREN to setOf(
             AgentRunState.RUNNING,
             AgentRunState.QUEUED,
+            AgentRunState.PAUSED,
+            AgentRunState.FAILED,
+            AgentRunState.CANCELLED,
+            AgentRunState.INTERRUPTED,
+        ),
+        // 等消费：可被下一回合（adopt）或事件唤醒续跑；超时退 PAUSED，不直接完成
+        AgentRunState.WAITING_OPERATION to setOf(
+            AgentRunState.RUNNING,
+            AgentRunState.COMPLETED,
             AgentRunState.PAUSED,
             AgentRunState.FAILED,
             AgentRunState.CANCELLED,
@@ -290,6 +316,7 @@ object AgentRunRules {
         AgentRunState.WAITING_APPROVAL,
         AgentRunState.WAITING_INPUT,
         AgentRunState.WAITING_CHILDREN,
+        AgentRunState.WAITING_OPERATION,
         -> true
 
         else -> false

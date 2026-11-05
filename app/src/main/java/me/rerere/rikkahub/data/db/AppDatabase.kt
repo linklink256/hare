@@ -19,6 +19,7 @@ import me.rerere.rikkahub.data.db.dao.MemoryConsolidationDAO
 import me.rerere.rikkahub.data.db.dao.MemoryDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.dao.StreamChunkDAO
+import me.rerere.rikkahub.data.db.dao.ToolOperationDAO
 import me.rerere.rikkahub.data.db.dao.TranslationHistoryDAO
 import me.rerere.rikkahub.data.db.dao.UsageRecordDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
@@ -40,9 +41,13 @@ import me.rerere.rikkahub.data.db.entity.MemoryConsolidationEntity
 import me.rerere.rikkahub.data.db.entity.MemoryFileEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.entity.StreamChunkEntity
+import me.rerere.rikkahub.data.db.entity.TaskAcceptanceEntity
+import me.rerere.rikkahub.data.db.entity.ToolOperationEntity
+import me.rerere.rikkahub.data.db.entity.RuntimeOperationEntity
 import me.rerere.rikkahub.data.db.entity.TranslationHistoryEntity
 import me.rerere.rikkahub.data.db.entity.UsageRecordEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
+import me.rerere.rikkahub.data.db.dao.RuntimeOperationDAO
 import me.rerere.rikkahub.data.db.migrations.Migration_16_17
 import me.rerere.rikkahub.data.db.migrations.Migration_22_23
 import me.rerere.rikkahub.data.db.migrations.Migration_28_29
@@ -72,8 +77,11 @@ import me.rerere.rikkahub.utils.JsonInstant
         AgentRunEntity::class,
         AgentRunEventEntity::class,
         AgentMailboxEntity::class,
+        TaskAcceptanceEntity::class,
+        ToolOperationEntity::class,
+        RuntimeOperationEntity::class,
     ],
-    version = 37,
+    version = 42,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -104,6 +112,13 @@ import me.rerere.rikkahub.utils.JsonInstant
         AutoMigration(from = 34, to = 35),
         AutoMigration(from = 35, to = 36),
         AutoMigration(from = 36, to = 37),
+        AutoMigration(from = 37, to = 38),
+        AutoMigration(from = 38, to = 39),
+        AutoMigration(from = 39, to = 40),
+        // R5-D：agent_teams 加 parent/depth/root 三列 + 唯一/普通索引（可空列不回填）
+        AutoMigration(from = 40, to = 41),
+        // R2：runtime_operation 新表 + agent_run/agent_run_event 加列 + run_tool_op.operation_id（纯建表/加列/加索引）
+        AutoMigration(from = 41, to = 42),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
@@ -139,6 +154,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun usageRecordDao(): UsageRecordDAO
 
     abstract fun streamChunkDao(): StreamChunkDAO
+
+    abstract fun toolOperationDao(): ToolOperationDAO
+
+    abstract fun runtimeOperationDao(): RuntimeOperationDAO
 }
 
 object TokenUsageConverter {
