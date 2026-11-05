@@ -22,6 +22,16 @@ data class AgentTeam(
     val title: String = "",
     val maxMembers: Int = DEFAULT_MAX_MEMBERS,
     val maxTasks: Int = DEFAULT_MAX_TASKS,
+    /** 父团队 id；null 表示根团队（R5-D 之前的旧行迁移后都是 null） */
+    val parentTeamId: Uuid? = null,
+    /** 嵌套深度：根团队 = 0，每建一层 +1 */
+    val depth: Int = 0,
+    /** 共享根步数账本的根团队；它就是根时等于 [id] */
+    val rootTeamId: Uuid = id,
+    /** 根账本额度：同一根团队下所有层的派活共用这一份额度 */
+    val stepBudget: Int = DEFAULT_ROOT_STEP_BUDGET,
+    /** 根账本已用步数（由 ChatService 每步累加） */
+    val stepsUsed: Int = 0,
     @Serializable(with = InstantSerializer::class)
     val createdAt: Instant = Instant.now(),
     @Serializable(with = InstantSerializer::class)
@@ -33,6 +43,9 @@ data class AgentTeam(
 
         /** 任务板上活跃任务上限 */
         const val DEFAULT_MAX_TASKS = 256
+
+        /** 根团队共享步数账本的默认额度（跨层合计） */
+        const val DEFAULT_ROOT_STEP_BUDGET = 1024
     }
 }
 
@@ -58,6 +71,8 @@ data class TeamMember(
     val conversationId: Uuid,
     /** 角色/职责提示词 */
     val role: String = "",
+    /** 允许该成员使用的工具名白名单；空表示不限制（沿用默认工具集） */
+    val allowedTools: List<String> = emptyList(),
     val status: TeamMemberStatus = TeamMemberStatus.PROVISIONING,
     @Serializable(with = InstantSerializer::class)
     val createdAt: Instant = Instant.now(),

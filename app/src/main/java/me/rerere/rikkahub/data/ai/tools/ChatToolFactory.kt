@@ -12,7 +12,10 @@ import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.TeamMemberToolScope
+import me.rerere.rikkahub.data.model.TeamNestingRules
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
+import me.rerere.rikkahub.runtime.OperationInbox
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
@@ -47,6 +50,7 @@ class ChatToolFactory(
     private val skillManager: SkillManager,
     private val workspaceRepository: WorkspaceRepository,
     private val agentTeamRepository: AgentTeamRepository,
+    private val operationInbox: OperationInbox,
     /** 懒解析：AgentTeamService 依赖 ChatService，而本类又在 ChatService 的依赖链上 */
     private val agentTeamService: Lazy<AgentTeamService>,
 ) {
@@ -57,7 +61,26 @@ class ChatToolFactory(
         conversationId: Uuid,
         workspaceCwd: String? = null,
     ): List<Tool> {
-        val isTeamMember = agentTeamRepository.getMemberByConversation(conversationId) != null
+        val member = agentTeamRepository.getMemberByConversation(conversationId)
+        val isTeamMember = member != null
+        // 队友的工具白名单；空表示沿用默认工具集（既有行为完全不变）
+        val memberScope = member?.allowedTools.orEmpty()
+        // 成员兼子队 lead 的条件：它所属队的深度再加一层仍在 maxDepth 之内
+        val memberTeam = member?.let { agentTeamRepository.getTeam(it.teamId) }
+        val canNest = memberTeam != null && TeamNestingRules.canNest(
+            parentDepth = memberTeam.depth,
+            maxDepth = TeamNestingRules.normalizeMaxDepth(settings.agentTeamMaxDepth),
+        )
+        // 领队工具集单独持有：成员工具白名单会把它们静默过滤掉，过滤之后要再加回来
+        val leaderTools = if (canUseTeamTools(assistant.enableAgentTeam, isTeamMember, canNest)) {
+            createAgentTeamTools(
+                teamService = agentTeamService.value,
+                teamRepository = agentTeamRepository,
+                leadConversationId = conversationId,
+            )
+        } else {
+            emptyList()
+        }
         val workspaceTools = createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), workspaceCwd)
         val tools = buildList {
             if (assistant.enableMemory) {
@@ -67,16 +90,25 @@ class ChatToolFactory(
                 addAll(createSearchTools(settings))
             }
             addAll(localTools.getTools(assistant.localTools, assistant.workspaceId?.toString()))
+            // 事件消费：与领队工具同一判据；成员白名单仍会在后面过滤
+            if (canUseTeamTools(assistant.enableAgentTeam, isTeamMember, canNest)) {
+                add(createReceiveEventsTool(operationInbox, conversationId))
+            }
             if (canUseMemberReportTools(assistant.enableAgentTeam, isTeamMember)) {
                 addAll(createMemberReportTools(conversationId))
             }
-            if (canUseTeamTools(assistant.enableAgentTeam, isTeamMember)) {
+            if (canUseMemberAskTools(assistant.enableAgentTeam, isTeamMember)) {
+                addAll(createTeamAskTools(conversationId))
+            }
+            // 成员视图：领队工具集里已有 team_status 时不重复注册（它已按领队视图返回）
+            if (canUseMemberStatusTools(assistant.enableAgentTeam, isTeamMember) &&
+                leaderTools.none { it.name == AgentTeamToolNames.TEAM_STATUS }
+            ) {
                 addAll(
-                    createAgentTeamTools(
+                    createTeamStatusTools(
                         teamService = agentTeamService.value,
                         teamRepository = agentTeamRepository,
-                        leadConversationId = conversationId,
-                        defaultWaitSeconds = settings.agentTeamWaitTimeoutSeconds,
+                        conversationId = conversationId,
                     )
                 )
             }
@@ -117,7 +149,13 @@ class ChatToolFactory(
         // 文件放在本机, 只有本地 Rootfs 挂载了 /tool_outputs, 远程工作区同样读不到
         val canReadToolOutputs = workspaceTools.isNotEmpty() &&
             assistant.workspaceId?.let { workspaceRepository.getById(it.toString()) }?.capabilities()?.rootfs == true
-        return if (canReadToolOutputs) tools.map(::withOutputTruncation) else tools
+        // 声明层过滤 + 执行层再校验，report_back/ask_lead 由 allows 保证保留
+        val scoped = if (memberScope.isEmpty()) tools else tools
+            .filter { TeamMemberToolScope.allows(memberScope, it.name) }
+            .map { guardMemberToolScope(it, memberScope) }
+        // 白名单只约束成员工具：成员兼子队 lead 时把领队工具补回，不受白名单过滤
+        val withLeaderTools = if (leaderTools.isEmpty()) scoped else scoped + leaderTools
+        return if (canReadToolOutputs) withLeaderTools.map(::withOutputTruncation) else withLeaderTools
     }
 
     private fun withOutputTruncation(tool: Tool): Tool {
