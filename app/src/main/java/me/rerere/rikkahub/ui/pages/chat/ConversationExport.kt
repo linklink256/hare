@@ -86,7 +86,10 @@ import me.rerere.rikkahub.ui.components.message.ThinkingStep
 import me.rerere.rikkahub.ui.components.message.ChatMessageServerToolStep
 import me.rerere.rikkahub.ui.components.message.groupMessageParts
 import me.rerere.rikkahub.ui.components.message.tools.memoryToolTitle
+import me.rerere.rikkahub.ui.components.message.mermaidCodeOrNull
+import me.rerere.rikkahub.ui.components.message.mermaidTitleOrNull
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.richtext.Mermaid
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
 import me.rerere.rikkahub.ui.components.ui.ChainOfThought
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
@@ -592,8 +595,17 @@ private fun ExportedChatMessage(
                     }
 
                     is MessagePartBlock.ChartBlock -> {
-                        val spec = remember(block.tool.input) { ChartSpec.fromJson(block.tool.inputAsJson()) }
-                        spec?.let { ChartCard(spec = it) }
+                        val mermaid = remember(block.tool.input) { block.tool.mermaidCodeOrNull() }
+                        if (mermaid != null) {
+                            Mermaid(
+                                code = mermaid,
+                                title = remember(block.tool.input) { block.tool.mermaidTitleOrNull() },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            val spec = remember(block.tool.input) { ChartSpec.fromJson(block.tool.inputAsJson()) }
+                            spec?.let { ChartCard(spec = it) }
+                        }
                     }
 
                     is MessagePartBlock.ContentBlock -> {

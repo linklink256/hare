@@ -61,6 +61,8 @@ import me.rerere.ui.toast.ToastType
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
@@ -199,6 +201,33 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     }
 
     val chatListState = rememberLazyListState()
+    // mermaid/图片这类内容会在首帧之后才长高；用户本来贴在底部时继续贴底，别让新内容把视口顶走
+    LaunchedEffect(chatListState) {
+        var armed = false
+        var userDragged = false
+        launch {
+            chatListState.interactionSource.interactions.collect { interaction ->
+                if (interaction is DragInteraction.Start) userDragged = true
+            }
+        }
+        snapshotFlow {
+            val info = chatListState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            initSnapshot(info.totalItemsCount, last?.index, last?.let { it.offset + it.size } ?: 0)
+        }.collect { (count, lastIndex, lastBottom) ->
+            if (count == 0) return@collect
+            val atBottom = lastIndex == count - 1 &&
+                lastBottom >= chatListState.layoutInfo.viewportEndOffset - 8
+            if (!armed) {
+                // 首帧不在底部（比如跳转到某条消息）就不接管滚动
+                armed = atBottom
+                return@collect
+            }
+            if (!userDragged && !atBottom) {
+                chatListState.scrollToItem(count - 1, Int.MAX_VALUE)
+            }
+        }
+    }
     LaunchedEffect(nodeId, conversation.messageNodes.size) {
         if (!vm.chatListInitialized && conversation.messageNodes.isNotEmpty()) {
             if (nodeId != null) {
@@ -793,3 +822,7 @@ private fun ConversationSkeleton(modifier: Modifier = Modifier) {
         }
     }
 }
+
+private data class ChatListSnapshot(val count: Int, val lastIndex: Int?, val lastBottom: Int)
+
+private fun initSnapshot(count: Int, lastIndex: Int?, lastBottom: Int) = ChatListSnapshot(count, lastIndex, lastBottom)
