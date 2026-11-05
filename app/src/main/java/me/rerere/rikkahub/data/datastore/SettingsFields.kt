@@ -133,6 +133,7 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         plain(SUGGESTION_PROMPT, Settings::suggestionPrompt) { copy(suggestionPrompt = it) },
         uuid(OCR_MODEL, Settings::ocrModelId) { copy(ocrModelId = it) },
         plain(OCR_PROMPT, Settings::ocrPrompt) { copy(ocrPrompt = it) },
+        plain(COMPRESSION_PROMPT, Settings::compressionPrompt) { copy(compressionPrompt = it) },
 
         // 提供商
         providers(PROVIDERS, Settings::providers) { copy(providers = it) },
@@ -205,6 +206,7 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         ),
         plain(AUTO_COMPRESSION_ENABLED, Settings::autoCompressionEnabled) { copy(autoCompressionEnabled = it) },
         plain(AUTO_COMPRESSION_THRESHOLD_PERCENT, Settings::autoCompressionThresholdPercent) { copy(autoCompressionThresholdPercent = it) },
+        plain(AUTO_COMPRESSION_KEEP_RECENT_MESSAGES, Settings::autoCompressionKeepRecentMessages) { copy(autoCompressionKeepRecentMessages = it) },
         plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
         plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },
         plain(AGENT_TEAM_MAX_DEPTH, Settings::agentTeamMaxDepth) { copy(agentTeamMaxDepth = it) },

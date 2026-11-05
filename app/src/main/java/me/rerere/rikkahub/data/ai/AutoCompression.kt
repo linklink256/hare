@@ -98,10 +98,13 @@ internal fun compressionThresholdReached(
 /**
  * 完整回合策略的覆盖终点（exclusive），null 表示这次不压缩。
  *
- * 覆盖上一有效检查点之后直到最后一个已完成助手消息的全部内容：任务正常完成时最后一条就是
+ * 默认覆盖上一有效检查点之后直到最后一个已完成助手消息的全部内容：任务正常完成时最后一条就是
  * 最终答复，所以终点就是消息数本身，检查点会落在它之后。只有一问一答也允许规划。
  *
- * 前提由调用方保证（只在正常 Completed 后调用）；这里再做防御：最后一条必须是助手消息，
+ * [keepRecentMessages] 大于 0 时终点前移，最近这些消息留在检查点之后继续按原文发给模型；
+ * 此时终点不要求落在助手消息上（尾部原文本来就不进摘要）。保留数盖住全部新内容时返回 null。
+ *
+ * 前提由调用方保证（只在正常 Completed 后调用）；这里再做防御：不保留尾部时最后一条必须是助手消息，
  * 覆盖范围内不允许还有未执行的工具。达到阈值但上一检查点之后没有新内容时不重复压缩。
  */
 internal fun completedTurnCompressionEnd(
@@ -111,20 +114,29 @@ internal fun completedTurnCompressionEnd(
     thresholdPercent: Int,
     outputReserve: Int = 4096,
     toolTokens: Long = 0,
+    keepRecentMessages: Int = 0,
 ): Int? {
     if (!compressionThresholdReached(messages, requestMessages, modelContext, thresholdPercent, outputReserve, toolTokens)) {
         return null
     }
-    if (messages.isEmpty() || messages.last().role != MessageRole.ASSISTANT) return null
+    if (messages.isEmpty()) return null
+    // 保留最近 N 条时，检查点插在覆盖段之后，这些原文留在检查点后面继续可见
+    val keep = keepRecentMessages.coerceIn(0, MAX_AUTO_COMPRESSION_KEEP_RECENT)
+    val end = (messages.size - keep).coerceAtLeast(0)
     val freshStart = messages.indexOfLast { it.isContextCheckpoint } + 1
-    if (messages.size - freshStart < 1) return null
-    if (messages.subList(freshStart, messages.size).any { message ->
+    // 不保留任何消息时仍要求最后一条是助手消息：只有正常完成的最终答复才值得收口
+    if (end == messages.size && messages.last().role != MessageRole.ASSISTANT) return null
+    if (end - freshStart < 1) return null
+    if (messages.subList(freshStart, end).any { message ->
             message.getTools().any { !it.isExecuted }
         }) {
         return null
     }
-    return messages.size
+    return end
 }
+
+/** 自动压缩保留最近消息数的上限；再往上保留，压缩后很难降到触发线以下。 */
+internal const val MAX_AUTO_COMPRESSION_KEEP_RECENT = 64
 
 /** 摘要自己的输出预算：约为模型窗口的 1/8，限制在 1024–8192；不继承聊天的输出上限，也不无界。 */
 internal fun compressionSummaryMaxTokens(modelContext: Int): Int {

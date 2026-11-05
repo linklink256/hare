@@ -2,21 +2,32 @@ package me.rerere.rikkahub.ui.pages.setting
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.Remove01
+import me.rerere.rikkahub.data.ai.MAX_AUTO_COMPRESSION_KEEP_RECENT
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.switchItem
@@ -53,6 +64,50 @@ fun SettingAutoCompressionPage() {
                     headlineContent = { Text("自动压缩") },
                     supportingContent = { Text("默认开启，适用于领队与队友。任务中达到阈值只标记，等本轮模型和工具调用全部正常完成后再压缩：把上一个摘要之后直到最终答复的整段已完成回合（含工具过程）收成摘要，检查点放在最终答复之后；原消息仍可在对话里查看、复制和导出。等待审批、达到步数上限、失败或取消时不压缩。") },
                 )
+                formItem(
+                    headlineContent = { Text("保留最近的消息数") },
+                    supportingContent = { Text("这些消息不参与压缩，原样保留在摘要之后。填 0 压缩全部消息，最能命中提示词缓存；对话太长导致压缩失败时可以多保留一些。") },
+                    trailingContent = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    vm.updateSettings {
+                                        it.copy(
+                                            autoCompressionKeepRecentMessages =
+                                                (it.autoCompressionKeepRecentMessages - 1).coerceAtLeast(0)
+                                        )
+                                    }
+                                },
+                                enabled = settings.autoCompressionKeepRecentMessages > 0,
+                            ) {
+                                Icon(HugeIcons.Remove01, contentDescription = "减少")
+                            }
+                            Text(
+                                text = settings.autoCompressionKeepRecentMessages.toString(),
+                                style = MaterialTheme.typography.titleMediumEmphasized,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.widthIn(min = 40.dp),
+                            )
+                            FilledTonalIconButton(
+                                onClick = {
+                                    vm.updateSettings {
+                                        it.copy(
+                                            autoCompressionKeepRecentMessages =
+                                                (it.autoCompressionKeepRecentMessages + 1)
+                                                    .coerceAtMost(MAX_AUTO_COMPRESSION_KEEP_RECENT)
+                                        )
+                                    }
+                                },
+                                enabled = settings.autoCompressionKeepRecentMessages < MAX_AUTO_COMPRESSION_KEEP_RECENT,
+                            ) {
+                                Icon(HugeIcons.Add01, contentDescription = "增加")
+                            }
+                        }
+                    },
+                ) {}
                 formItem(
                     headlineContent = { Text("触发比例（%）") },
                     supportingContent = { Text("10–95%，默认 75%。按当前会话模型的上下文窗口计算，切换模型自动适配。为回复预留空间时可能提前压缩。结合服务端用量与本地估算，并非精确计数；请正确填写模型上下文窗口。") },

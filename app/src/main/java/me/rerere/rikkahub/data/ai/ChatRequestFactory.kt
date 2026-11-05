@@ -211,31 +211,58 @@ class ChatRequestFactory(
         onAutoCheckpoint: suspend (List<UIMessage>, UIMessage) -> Unit,
     ) {
         if (!turn.settings.autoCompressionEnabled) return
+        val keepRecent = turn.settings.autoCompressionKeepRecentMessages
+            .coerceIn(0, MAX_AUTO_COMPRESSION_KEEP_RECENT)
         var end: Int? = null
+        // 覆盖段之外仍保留的固定开销（系统规则 + 工具定义），缩减保留区前先用它估算
+        var planFixedTokens = 0L
         try {
             turn.deferredCompression.afterTask(
                 completed = completed,
                 finalThresholdReached = {
                     val step = buildStep(turn, messages, processingStatus)
-                    end = compressionEnd(turn, messages, step)
+                    end = compressionEnd(turn, messages, step, keepRecent)
+                    planFixedTokens = estimateContextTokens(step.messages.filter { it.isSynthetic }) +
+                        estimateToolTokens(step.params.tools)
                     end != null
                 },
                 compress = {
-                    val prefix = messages.take(checkNotNull(end))
-                    // 先确认来源仍是本轮那个分支与内容，再花一次摘要请求
-                    verifySource(prefix)
-                    processingStatus.value = "任务已完成，正在自动压缩上下文…"
+                    var covered = checkNotNull(end)
                     val compressPrompt = buildCompressPrompt(
                         additionalPrompt = compressionAdditionalPrompt(),
                         locale = Locale.getDefault().displayName,
+                        template = turn.settings.compressionPrompt,
                     )
+                    val budget = automaticCompressionBudget(
+                        modelContext = turn.model.contextLength,
+                        thresholdPercent = turn.settings.autoCompressionThresholdPercent,
+                        outputReserve = turn.assistant.maxTokens ?: 4096,
+                    )
+                    // 保留区同样占上下文：压缩后仍贴着触发线就多压几条，宁可少留也不要白花一次请求
+                    val checkpointCap = compressionSummaryMaxTokens(turn.model.contextLength) +
+                        preservedUserQuoteBudgetTokens(turn.model.contextLength) +
+                        estimateTextTokens(compressPrompt)
+                    while (
+                        covered < messages.size &&
+                        !compressionFitsBudget(
+                            fixedTokens = planFixedTokens,
+                            replacementTokens = checkpointCap + estimateContextTokens(messages.drop(covered)),
+                            budget = budget,
+                        )
+                    ) {
+                        covered++
+                    }
+                    val prefix = messages.take(covered)
+                    // 先确认来源仍是本轮那个分支与内容，再花一次摘要请求
+                    verifySource(prefix)
+                    processingStatus.value = "任务已完成，正在自动压缩上下文…"
                     // 预算可行性、摘要输出预算与生成后长度验收都在 generateCompressionSummary 内部
                     // 按装配后的实际输入计算一次，避免重复读/重复转换
                     val compression = try {
                         generateCompressionSummary(
                             turn = turn,
                             messages = prefix,
-                            // 要覆盖到最终答复，摘要输入不能被普通条数限制再裁一次
+                            // 覆盖范围不能被普通条数限制再裁一次
                             applyContextLimit = false,
                             compressPrompt = compressPrompt,
                         )
@@ -256,14 +283,11 @@ class ChatRequestFactory(
                     val replacement = estimateContextTokens(
                         listOf(UIMessage.user(checkpointText).copy(isContextCheckpoint = true))
                     )
-                    val budget = automaticCompressionBudget(
-                        modelContext = turn.model.contextLength,
-                        thresholdPercent = turn.settings.autoCompressionThresholdPercent,
-                        outputReserve = turn.assistant.maxTokens ?: 4096,
-                    )
-                    // 摘要过长、压缩后仍贴着触发线时不安装检查点：原文和旧检查点都保留
-                    check(compressionFitsBudget(fixedTokens, replacement, budget)) {
-                        "压缩后的上下文没有明显下降（估算 ${fixedTokens + replacement} / 触发线 $budget），本次不保存摘要"
+                    // 检查点之后保留的原文也计入这次压缩的结果
+                    val retained = estimateContextTokens(messages.drop(covered))
+                    // 摘要过长、或保留区太多导致压缩后仍贴着触发线时不安装检查点：原文和旧检查点都保留
+                    check(compressionFitsBudget(fixedTokens, replacement + retained, budget)) {
+                        "压缩后的上下文没有明显下降（估算 ${fixedTokens + replacement + retained} / 触发线 $budget），本次不保存摘要"
                     }
                     onAutoCheckpoint(prefix, UIMessage.user(checkpointText).copy(isContextCheckpoint = true))
                 },
@@ -304,6 +328,7 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         step: StepRequest,
+        keepRecentMessages: Int = 0,
     ): Int? = completedTurnCompressionEnd(
         messages = messages,
         requestMessages = step.messages,
@@ -311,6 +336,7 @@ class ChatRequestFactory(
         thresholdPercent = turn.settings.autoCompressionThresholdPercent,
         outputReserve = turn.assistant.maxTokens ?: 4096,
         toolTokens = estimateToolTokens(step.params.tools),
+        keepRecentMessages = keepRecentMessages,
     )
 
     /**

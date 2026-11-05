@@ -34,11 +34,13 @@ import androidx.compose.ui.util.fastForEach
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowRight01
+import me.rerere.hugeicons.stroke.FileZip
 import me.rerere.hugeicons.stroke.Heading
 import me.rerere.hugeicons.stroke.Idea01
 import me.rerere.hugeicons.stroke.ScanText
 import me.rerere.hugeicons.stroke.Translate
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.prompts.DEFAULT_COMPRESSION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TITLE_PROMPT
@@ -156,6 +158,14 @@ private enum class PromptSlot(
         default = DEFAULT_OCR_PROMPT,
         get = { it.ocrPrompt },
         set = { settings, value -> settings.copy(ocrPrompt = value) },
+    ),
+    COMPRESSION(
+        icon = HugeIcons.FileZip,
+        title = R.string.setting_model_page_prompt_compression,
+        variables = R.string.setting_model_page_compression_prompt_vars,
+        default = DEFAULT_COMPRESSION_PROMPT,
+        get = { it.compressionPrompt },
+        set = { settings, value -> settings.copy(compressionPrompt = value) },
     ),
 }
 

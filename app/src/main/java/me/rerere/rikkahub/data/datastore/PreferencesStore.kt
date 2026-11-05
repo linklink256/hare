@@ -126,6 +126,7 @@ class SettingsStore internal constructor(
         val SUGGESTION_PROMPT = stringPreferencesKey("suggestion_prompt")
         val OCR_MODEL = stringPreferencesKey("ocr_model")
         val OCR_PROMPT = stringPreferencesKey("ocr_prompt")
+        val COMPRESSION_PROMPT = stringPreferencesKey("compression_prompt")
 
         // 提供商
         val PROVIDERS = stringPreferencesKey("providers")
@@ -183,6 +184,7 @@ class SettingsStore internal constructor(
         val AUTO_COMPRESSION_ENABLED = booleanPreferencesKey("auto_compression_enabled")
         // New key: the old absolute-token value must never be interpreted as a percent.
         val AUTO_COMPRESSION_THRESHOLD_PERCENT = intPreferencesKey("auto_compression_threshold_percent")
+        val AUTO_COMPRESSION_KEEP_RECENT_MESSAGES = intPreferencesKey("auto_compression_keep_recent_messages")
 
         // Agent Team（子代理团队）
         val AGENT_TEAM_MODEL = stringPreferencesKey("agent_team_model")

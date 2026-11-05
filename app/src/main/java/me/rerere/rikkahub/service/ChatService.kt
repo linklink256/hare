@@ -2065,7 +2065,7 @@ class ChatService(
                                     )
                                 }
                                 session.flush()
-                                // 安装点诊断：新增的检查点应紧跟在本轮回复之后，其后不应还有消息
+                                // 安装点诊断：检查点应落在覆盖段之后，其后只应留下配置里保留的原文
                                 val installed = session.state.value
                                 val index = installed.messageNodes
                                     .indexOfLast { it.currentMessage.isContextCheckpoint }
@@ -2075,8 +2075,13 @@ class ChatService(
                                     "auto checkpoint installed: anchor=$anchorIndex nodes=${installed.messageNodes.size} " +
                                         "checkpointIndex=$index retainedAfter=$retained id=${checkpoint.id}",
                                 )
-                                if (retained > 0) {
-                                    Log.w(TAG, "auto checkpoint is not last: $retained messages stay after it")
+                                // 配置了保留最近消息数时，检查点后面本就应有原文；只有数量对不上才报警
+                                val expectedRetained = finalHistory.size - prefix.size
+                                if (retained != expectedRetained) {
+                                    Log.w(
+                                        TAG,
+                                        "auto checkpoint tail mismatch: $retained messages stay after it, expected $expectedRetained",
+                                    )
                                 }
                             },
                         )
@@ -2273,7 +2278,8 @@ class ChatService(
             }) { context.getString(R.string.chat_page_compress_handle_pending_tools) }
 
             // 必须和对话用同一个模型、同一套请求组装，才能命中提示词缓存
-            val turn = requestFactory.createContext(settingsStore.awaitLoaded(), conversation)
+            val settings = settingsStore.awaitLoaded()
+            val turn = requestFactory.createContext(settings, conversation)
             // 预算可行性/摘要输出预算同样在装配后统一计算；手动压缩只需要正文
             val summary = requestFactory.generateCompressionSummary(
                 turn = turn,
@@ -2281,6 +2287,7 @@ class ChatService(
                 compressPrompt = buildCompressPrompt(
                     additionalPrompt = additionalPrompt,
                     locale = Locale.getDefault().displayName,
+                    template = settings.compressionPrompt,
                 ),
             ).summary
 

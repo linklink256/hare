@@ -8,6 +8,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.asr.ASRProviderSetting
 import me.rerere.mediagen.provider.MediaGenerationProviderSetting
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
+import me.rerere.rikkahub.data.ai.prompts.DEFAULT_COMPRESSION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TITLE_PROMPT
@@ -42,6 +43,8 @@ data class Settings(
     // 自动上下文压缩：任务正常完成后压缩整段已完成回合，阈值为当前模型上下文窗口的百分比。
     val autoCompressionEnabled: Boolean = true,
     val autoCompressionThresholdPercent: Int = 75,
+    /** 自动压缩后保留在检查点之后的最近消息条数；0 表示整段已完成回合都压进摘要 */
+    val autoCompressionKeepRecentMessages: Int = 0,
     // ---- Agent Team（子代理团队）----
     /** 一个团队最多创建几个队友（含创建失败的），1..32 */
     val agentTeamMaxMembers: Int = 8,
@@ -69,6 +72,8 @@ data class Settings(
     val suggestionPrompt: String = DEFAULT_SUGGESTION_PROMPT,
     val ocrModelId: Uuid = Uuid.random(),
     val ocrPrompt: String = DEFAULT_OCR_PROMPT,
+    /** 自动/手动压缩用的摘要指令模板，{locale} 会替换成当前语言 */
+    val compressionPrompt: String = DEFAULT_COMPRESSION_PROMPT,
     val assistantId: Uuid = DEFAULT_ASSISTANT_ID,
     val providers: List<ProviderSetting> = DEFAULT_PROVIDERS,
     val assistants: List<Assistant> = DEFAULT_ASSISTANTS,
