@@ -47,8 +47,10 @@ data class Settings(
     val agentTeamMaxMembers: Int = 8,
     /** 团队共享任务板的任务上限，1..1024 */
     val agentTeamMaxTasks: Int = 256,
-    /** wait_agent 的默认等待秒数，10..600 */
-    val agentTeamWaitTimeoutSeconds: Int = 120,
+    /** 团队嵌套最大深度，1..3；大于 1 时允许队友自己建队 */
+    val agentTeamMaxDepth: Int = 1,
+    /** 根团队（共享预算账本）的总步数，256..100000；终身累计，用满后只能调高 */
+    val agentTeamRootStepBudget: Int = 4096,
     val chatModelId: Uuid = Uuid.random(),
     val fastModelId: Uuid = Uuid.random(),
     val fastModelReasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,

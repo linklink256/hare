@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.datastore
 
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.utils.JsonInstant
@@ -88,6 +89,10 @@ private fun reasoningLevel(
     encode = { it.name },
     decode = { name -> ReasoningLevel.entries.find { it.name == name } ?: ReasoningLevel.AUTO },
 )
+
+/** 嵌套深度的 key。其它 key 在 [SettingsStore] 的 companion 里，该文件不在本波次可写范围，故放这里。 */
+private val AGENT_TEAM_MAX_DEPTH = intPreferencesKey("agent_team_max_depth")
+private val AGENT_TEAM_ROOT_STEP_BUDGET = intPreferencesKey("agent_team_root_step_budget")
 
 internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
     listOf(
@@ -202,7 +207,8 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         plain(AUTO_COMPRESSION_THRESHOLD_PERCENT, Settings::autoCompressionThresholdPercent) { copy(autoCompressionThresholdPercent = it) },
         plain(AGENT_TEAM_MAX_MEMBERS, Settings::agentTeamMaxMembers) { copy(agentTeamMaxMembers = it) },
         plain(AGENT_TEAM_MAX_TASKS, Settings::agentTeamMaxTasks) { copy(agentTeamMaxTasks = it) },
-        plain(AGENT_TEAM_WAIT_TIMEOUT, Settings::agentTeamWaitTimeoutSeconds) { copy(agentTeamWaitTimeoutSeconds = it) },
+        plain(AGENT_TEAM_MAX_DEPTH, Settings::agentTeamMaxDepth) { copy(agentTeamMaxDepth = it) },
+        plain(AGENT_TEAM_ROOT_STEP_BUDGET, Settings::agentTeamRootStepBudget) { copy(agentTeamRootStepBudget = it) },
     )
 }
 
