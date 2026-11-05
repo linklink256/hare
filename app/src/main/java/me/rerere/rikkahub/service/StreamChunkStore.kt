@@ -3,7 +3,10 @@ package me.rerere.rikkahub.service
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.db.AppDatabase
@@ -20,6 +23,17 @@ import kotlin.uuid.Uuid
 private const val TAG = "StreamChunkStore"
 private const val KIND_TEXT = "text"
 private const val KIND_REASONING = "reasoning"
+private const val KIND_TOOL = "tool"
+
+/** 工具输入在流式增长，每长这么多字符才重记一次快照；执行状态变化会立刻重记 */
+private const val TOOL_SNAPSHOT_INPUT_STEP = 2048
+
+/** 工具快照只给同一个类用，单独一个 Json，不动全局序列化行为 */
+private val toolChunkJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    explicitNulls = false
+}
 
 /**
  * 生成中的增量落库：流式热路径上只把这次新写出的那一段文本追加进 stream_chunk，
@@ -31,27 +45,59 @@ class StreamChunkStore(
 ) : KoinComponent {
     private data class StreamedPart(val kind: String, val text: String)
 
+    /** 只用来判断工具快照是否需要重记；不持有 tool 本体，免得把大输出留在内存里 */
+    private data class ToolSnapshot(
+        val toolCallId: String,
+        val toolName: String,
+        val inputLength: Int,
+        val outputSize: Int,
+        val approvalState: ToolApprovalState,
+        val startedAt: kotlin.time.Instant?,
+        val finishedAt: kotlin.time.Instant?,
+        val metadata: JsonObject?,
+    )
+
     private val database: AppDatabase by inject()
 
     // messageId -> 每个 part 上次追加到的文本；null 表示该 part 不落库
     private val lastParts = ConcurrentHashMap<Uuid, List<StreamedPart?>>()
 
+    // messageId -> (partIndex -> 已经落库的那份工具快照)
+    private val lastTools = ConcurrentHashMap<Uuid, MutableMap<Int, ToolSnapshot>>()
+
     // conversationId -> 本次生成正在写的 messageId
     private val messagesOfConversation = ConcurrentHashMap<Uuid, MutableSet<Uuid>>()
 
-    /** 追加 [message] 相比上次新增的文本。只写增量，不做整条会话序列化。 */
+    /** 追加 [message] 相比上次新增的文本/工具状态。只写增量，不做整条会话序列化。 */
     suspend fun append(conversationId: Uuid, message: UIMessage) {
         val current = message.parts.map { part ->
             when (part) {
                 is UIMessagePart.Text -> StreamedPart(KIND_TEXT, part.text)
                 is UIMessagePart.Reasoning -> StreamedPart(KIND_REASONING, part.reasoning)
+                // 工具调用与输出整份快照，text 字段不用
+                is UIMessagePart.Tool -> StreamedPart(KIND_TOOL, "")
                 else -> null
             }
         }
         val previous = lastParts[message.id]
+        val previousTools = lastTools[message.id]
+        val toolWrites = HashMap<Int, ToolSnapshot>()
         val rows = buildList {
             current.forEachIndexed { index, part ->
-                if (part == null || part.text.isEmpty()) return@forEachIndexed
+                if (part == null) return@forEachIndexed
+                if (part.kind == KIND_TOOL) {
+                    val tool = message.parts.getOrNull(index) as? UIMessagePart.Tool
+                        ?: return@forEachIndexed
+                    val snapshot = tool.snapshot()
+                    if (!snapshot.shouldWrite(previousTools?.get(index))) return@forEachIndexed
+                    val encoded = runCatching {
+                        toolChunkJson.encodeToString(UIMessagePart.Tool.serializer(), tool)
+                    }.getOrNull() ?: return@forEachIndexed
+                    toolWrites[index] = snapshot
+                    add(row(conversationId, message.id, index, part, encoded, reset = true))
+                    return@forEachIndexed
+                }
+                if (part.text.isEmpty()) return@forEachIndexed
                 val old = previous?.getOrNull(index)?.takeIf { it.kind == part.kind }?.text.orEmpty()
                 when {
                     part.text.length > old.length && part.text.startsWith(old) -> add(
@@ -65,6 +111,9 @@ class StreamChunkStore(
             }
         }
         lastParts[message.id] = current
+        if (toolWrites.isNotEmpty()) {
+            lastTools.getOrPut(message.id) { HashMap() }.putAll(toolWrites)
+        }
         messagesOfConversation.getOrPut(conversationId) { ConcurrentHashMap.newKeySet<Uuid>() }.add(message.id)
         if (rows.isEmpty()) return
         withContext(Dispatchers.IO) { database.streamChunkDao().insertAll(rows) }
@@ -72,7 +121,10 @@ class StreamChunkStore(
 
     /** 这一轮已经整条落库（或已放弃），增量片段不再需要 */
     suspend fun clear(conversationId: Uuid) {
-        messagesOfConversation.remove(conversationId)?.forEach { lastParts.remove(it) }
+        messagesOfConversation.remove(conversationId)?.forEach {
+            lastParts.remove(it)
+            lastTools.remove(it)
+        }
         withContext(Dispatchers.IO) { database.streamChunkDao().deleteOfConversation(conversationId.toString()) }
     }
 
@@ -152,19 +204,27 @@ class StreamChunkStore(
     private fun rebuildParts(rows: List<StreamChunkEntity>): List<UIMessagePart?> {
         val kinds = HashMap<Int, String>()
         val texts = HashMap<Int, StringBuilder>()
+        val tools = HashMap<Int, UIMessagePart.Tool>()
         rows.sortedBy { it.id }.forEach { chunk ->
-            kinds.putIfAbsent(chunk.partIndex, chunk.partKind)
+            // 以最后一条为准：同一位在重试里换过 part 类型时，不能停在第一次的类型上
+            kinds[chunk.partIndex] = chunk.partKind
+            if (chunk.partKind == KIND_TOOL) {
+                // 工具快照是整份 JSON，取最后一条
+                runCatching {
+                    toolChunkJson.decodeFromString(UIMessagePart.Tool.serializer(), chunk.chunkText)
+                }.getOrNull()?.let { tools[chunk.partIndex] = it }
+                return@forEach
+            }
             val builder = texts.getOrPut(chunk.partIndex) { StringBuilder() }
             if (chunk.isReset) builder.setLength(0)
             builder.append(chunk.chunkText)
         }
         val maxIndex = kinds.keys.maxOrNull() ?: return emptyList()
         return (0..maxIndex).map { index ->
-            val kind = kinds[index] ?: return@map null
-            val text = texts[index]?.toString().orEmpty()
-            when (kind) {
-                KIND_TEXT -> UIMessagePart.Text(text)
-                KIND_REASONING -> UIMessagePart.Reasoning(reasoning = text)
+            when (kinds[index]) {
+                KIND_TEXT -> UIMessagePart.Text(texts[index]?.toString().orEmpty())
+                KIND_REASONING -> UIMessagePart.Reasoning(reasoning = texts[index]?.toString().orEmpty())
+                KIND_TOOL -> tools[index]
                 else -> null
             }
         }
@@ -177,6 +237,18 @@ class StreamChunkStore(
         val merged = existing.toMutableList()
         recovered.forEachIndexed { index, part ->
             if (part == null) return@forEachIndexed
+            // 工具按 toolCallId 认，不靠下标：库里的那份已经有输出就留它
+            if (part is UIMessagePart.Tool) {
+                val at = merged.indexOfFirst {
+                    it is UIMessagePart.Tool && it.toolCallId == part.toolCallId
+                }
+                if (at < 0) {
+                    merged.add(part)
+                } else if ((merged[at] as UIMessagePart.Tool).output.isEmpty() && part.output.isNotEmpty()) {
+                    merged[at] = part
+                }
+                return@forEachIndexed
+            }
             val current = merged.getOrNull(index)
             if (current != null && sameKind(current, part)) {
                 // 两边的文本一般都互为前缀，留长的那个
@@ -186,6 +258,29 @@ class StreamChunkStore(
             }
         }
         return merged
+    }
+
+    private fun UIMessagePart.Tool.snapshot() = ToolSnapshot(
+        toolCallId = toolCallId,
+        toolName = toolName,
+        inputLength = input.length,
+        outputSize = output.size,
+        approvalState = approvalState,
+        startedAt = startedAt,
+        finishedAt = finishedAt,
+        metadata = metadata,
+    )
+
+    /** 与上次落库的那份比，这一次是否值得再写一行 */
+    private fun ToolSnapshot.shouldWrite(previous: ToolSnapshot?): Boolean {
+        if (previous == null) return true
+        if (toolCallId != previous.toolCallId || toolName != previous.toolName) return true
+        if (outputSize != previous.outputSize || approvalState != previous.approvalState) return true
+        if (startedAt != previous.startedAt || finishedAt != previous.finishedAt) return true
+        if (metadata != previous.metadata) return true
+        // 参数在流式增长：按步进记，崩掉也不会只剩一个空参数
+        return inputLength - previous.inputLength >= TOOL_SNAPSHOT_INPUT_STEP ||
+            inputLength < previous.inputLength
     }
 
     private fun sameKind(a: UIMessagePart, b: UIMessagePart): Boolean = when {
