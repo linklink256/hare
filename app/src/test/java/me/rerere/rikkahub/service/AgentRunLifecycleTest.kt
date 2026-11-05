@@ -42,6 +42,11 @@ class AgentRunLifecycleTest {
     @Test
     fun `finish reasons map to the frozen run states and reasons`() {
         assertEquals(AgentRunState.COMPLETED, AgentRunLifecycle.stateFor(AgentFinishReason.Completed))
+        // 回合结束时仍有已受理的后台 operation：进等待态而不是假装完成
+        assertEquals(
+            AgentRunState.WAITING_OPERATION,
+            AgentRunLifecycle.stateFor(AgentFinishReason.Completed, hasOpenOperations = true),
+        )
         assertEquals(
             AgentRunState.WAITING_APPROVAL,
             AgentRunLifecycle.stateFor(AgentFinishReason.AwaitingApproval(setOf("call-1", "call-2"))),
@@ -178,6 +183,7 @@ class AgentRunLifecycleTest {
             AgentRunState.WAITING_APPROVAL to RunProjection(true, false, true, false),
             AgentRunState.WAITING_INPUT to RunProjection(true, false, false, false),
             AgentRunState.WAITING_CHILDREN to RunProjection(true, false, false, false),
+            AgentRunState.WAITING_OPERATION to RunProjection(true, false, false, false),
             AgentRunState.PAUSED to RunProjection(false, false, false, true),
             AgentRunState.COMPLETED to RunProjection(false, false, false, false),
             AgentRunState.FAILED to RunProjection(false, false, false, false),
