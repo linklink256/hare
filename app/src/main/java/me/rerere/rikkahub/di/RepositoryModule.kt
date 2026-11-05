@@ -25,7 +25,7 @@ import java.io.File
 
 val repositoryModule = module {
     single {
-        AgentTeamRepository(get())
+        AgentTeamRepository(get(), get())
     }
 
     single {

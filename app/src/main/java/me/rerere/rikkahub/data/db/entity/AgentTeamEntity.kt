@@ -5,7 +5,15 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "agent_teams")
+@Entity(
+    tableName = "agent_teams",
+    indices = [
+        // 一个 Lead 会话只能有一支队：并发 getOrCreateTeam 由唯一索引兜住，不建出第二支
+        Index(value = ["lead_conversation_id"], unique = true),
+        Index(value = ["parent_team_id"]),
+        Index(value = ["root_team_id"]),
+    ]
+)
 data class AgentTeamEntity(
     @PrimaryKey
     @ColumnInfo("id")
@@ -22,6 +30,19 @@ data class AgentTeamEntity(
     val createdAt: Long,
     @ColumnInfo("updated_at")
     val updatedAt: Long,
+    /** 父团队 id；NULL = 根团队（可空列，迁移不加默认值） */
+    @ColumnInfo("parent_team_id")
+    val parentTeamId: String? = null,
+    @ColumnInfo("depth", defaultValue = "0")
+    val depth: Int = 0,
+    /** 根团队 id；NULL = 迁移未回填，读出时归一为自己 */
+    @ColumnInfo("root_team_id")
+    val rootTeamId: String? = null,
+    /** 与 AgentTeam.DEFAULT_ROOT_STEP_BUDGET 一致 */
+    @ColumnInfo("step_budget", defaultValue = "1024")
+    val stepBudget: Int = 1024,
+    @ColumnInfo("steps_used", defaultValue = "0")
+    val stepsUsed: Int = 0,
 )
 
 /**
@@ -53,6 +74,9 @@ data class AgentTeamMemberEntity(
     val createdAt: Long,
     @ColumnInfo(name = "last_run_elapsed_millis", defaultValue = "NULL")
     val lastRunElapsedMillis: Long? = null,
+    /** JSON 数组字符串；NULL/空表示不限制 */
+    @ColumnInfo(name = "allowed_tools", defaultValue = "NULL")
+    val allowedTools: String? = null,
 )
 
 /** 共享任务板。`blocked_by` 是 JSON 数组字符串，`revision` 用于 compare-and-set。 */

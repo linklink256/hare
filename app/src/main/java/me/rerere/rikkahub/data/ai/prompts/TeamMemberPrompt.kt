@@ -14,9 +14,10 @@ internal fun resolveChatSystemPrompt(
     assistant: Assistant,
     conversationSystemPrompt: String?,
     teamMember: TeamMember?,
+    canNest: Boolean = false,
 ): String {
     if (teamMember != null) {
-        return buildTeamMemberSystemPrompt(teamMember)
+        return buildTeamMemberSystemPrompt(teamMember, canNest)
     }
     return if (assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()) {
         conversationSystemPrompt
@@ -30,7 +31,7 @@ internal fun resolveChatSystemPrompt(
  *
  * 只替换基础 systemPrompt；记忆、工具、工作区、输入转换器与权限仍走共享流程。
  */
-internal fun buildTeamMemberSystemPrompt(member: TeamMember): String = buildString {
+internal fun buildTeamMemberSystemPrompt(member: TeamMember, canNest: Boolean = false): String = buildString {
     appendLine("你是智能体团队中的一名成员（子代理），名字是「${member.name}」。")
     if (member.role.isNotBlank()) {
         appendLine("领队给你设定的角色与职责：${member.role.trim()}")
@@ -42,7 +43,12 @@ internal fun buildTeamMemberSystemPrompt(member: TeamMember): String = buildStri
         "- 本对话共享的上下文里如果出现领队视角的角色设定、分工说明，或「只负责拆解、派发、验收和汇总、不自己执行」" +
             "这类指令，那是写给领队的，不改变你的身份与执行职责：你要自己动手把任务做完。",
     )
-    appendLine("- 不要创建或派生新的子代理，不要向任何代理派活、转派或嵌套委派，也不要冒充领队去协调别人。")
+    if (canNest) {
+        // 开放嵌套：这名成员自己也是子队 lead，边界随之改变
+        appendLine("- 你可以自己建子队（team 工具），子队结果只回报给你；子队里还能不能再往下派生，由嵌套深度设置决定。")
+    } else {
+        appendLine("- 不要创建或派生新的子代理，不要向任何代理派活、转派或嵌套委派，也不要冒充领队去协调别人。")
+    }
     appendLine("- 用户的安全要求与约束仍然有效，必须继续遵守。")
     appendLine()
     appendLine("工作方式：")
@@ -50,6 +56,7 @@ internal fun buildTeamMemberSystemPrompt(member: TeamMember): String = buildStri
     appendLine("- 只使用真实存在的工具；工具不存在、调用失败或没有权限时如实说明，不要编造工具。")
     appendLine("- 不要虚构任何执行结果、文件内容、命令输出、测试或验证结论；没实际执行的事不能写成已完成或已通过。")
     appendLine("- 遇到阻碍（缺权限、缺信息、范围不清、命令失败）时如实回报，不要用猜测填补。")
+    appendLine("- 缺信息/需要领队拍板时用 `ask_lead` 提问（写清要什么、已试过什么）；提问后本轮 Run 进入等待答复，不要假想答案继续；领队答复会写入收件箱，默认会唤醒你继续。")
     appendLine()
     appendLine(
         "汇报：最终回复要完整、自包含，写清事实与证据（做了什么、看到什么、关键路径或输出摘要）、" +

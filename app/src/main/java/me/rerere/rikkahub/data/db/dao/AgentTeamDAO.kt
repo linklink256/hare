@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import me.rerere.rikkahub.data.db.entity.AgentTeamEntity
 import me.rerere.rikkahub.data.db.entity.AgentTeamMemberEntity
 import me.rerere.rikkahub.data.db.entity.AgentTeamTaskEntity
+import me.rerere.rikkahub.data.db.entity.TaskAcceptanceEntity
 
 @Dao
 interface AgentTeamDAO {
@@ -24,6 +25,18 @@ interface AgentTeamDAO {
 
     @Query("SELECT * FROM agent_teams ORDER BY updated_at DESC")
     fun listTeams(): Flow<List<AgentTeamEntity>>
+
+    /** 直接子队（创建时间升序）；跨层展开由 Repository 逐层调用，不在 SQL 里递归 */
+    @Query("SELECT * FROM agent_teams WHERE parent_team_id = :parentId ORDER BY created_at ASC")
+    suspend fun listSubTeams(parentId: String): List<AgentTeamEntity>
+
+    /** 同一根账本下的团队 id（含根自己）；迁移未回填的旧行只命中 `id = :rootId` 这一支 */
+    @Query("SELECT id FROM agent_teams WHERE root_team_id = :rootId OR id = :rootId")
+    suspend fun listTeamIdsUnderRoot(rootId: String): List<String>
+
+    /** 根账本累加：调用方保证 delta >= 0，账本只加不减 */
+    @Query("UPDATE agent_teams SET steps_used = steps_used + :delta WHERE id = :teamId")
+    suspend fun addSteps(teamId: String, delta: Int)
 
     @Query("DELETE FROM agent_teams WHERE id = :id")
     suspend fun deleteTeam(id: String)
@@ -112,4 +125,18 @@ interface AgentTeamDAO {
 
     @Query("DELETE FROM agent_team_tasks WHERE team_id = :teamId")
     suspend fun deleteTasksOfTeam(teamId: String)
+
+    // ---------- 接受凭据（append-only） ----------
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAcceptance(row: TaskAcceptanceEntity)
+
+    @Query("SELECT * FROM task_acceptance WHERE task_id = :taskId AND task_revision = :taskRevision LIMIT 1")
+    suspend fun getAcceptance(taskId: String, taskRevision: Long): TaskAcceptanceEntity?
+
+    @Query("SELECT * FROM task_acceptance WHERE team_id = :teamId")
+    suspend fun listAcceptance(teamId: String): List<TaskAcceptanceEntity>
+
+    @Query("SELECT * FROM task_acceptance WHERE team_id = :teamId ORDER BY created_at DESC")
+    fun observeAcceptance(teamId: String): Flow<List<TaskAcceptanceEntity>>
 }

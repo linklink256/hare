@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import me.rerere.rikkahub.data.model.TeamAdmissionRules
 import me.rerere.rikkahub.data.model.TeamRunTiming
 
 /** Shared per-team runtime admission, including UI/Web/regeneration/approval entry points. */
@@ -57,7 +58,7 @@ class TeamExecutionGate(private val nowNanos: () -> Long = System::nanoTime) {
             val observed = revision.value
             val admitted = mutex.withLock {
                 val slots = active[team]
-                if ((slots?.size ?: 0) >= limit().coerceAtLeast(1)) false else {
+                if (!TeamAdmissionRules.canAdmit(slots?.size ?: 0, limit())) false else {
                     active.getOrPut(team) { mutableSetOf() }.add(token)
                     admissions[token] = conversation
                     startedAtNanos = nowNanos()
