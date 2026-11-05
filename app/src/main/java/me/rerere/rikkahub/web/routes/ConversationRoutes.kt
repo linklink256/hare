@@ -295,7 +295,8 @@ fun Route.conversationRoutes(
 
             chatService.initializeConversation(uuid)
             if (folderId != null) chatService.updateDraftConversationFolder(uuid, folderId)
-            chatService.sendMessage(uuid, request.parts, answer = true)
+            // 生成中发送按插话处理，和 App 内输入框一致
+            chatService.sendUserMessage(uuid, request.parts, answer = true)
 
             call.respond(HttpStatusCode.Accepted, mapOf("status" to "accepted"))
         }
