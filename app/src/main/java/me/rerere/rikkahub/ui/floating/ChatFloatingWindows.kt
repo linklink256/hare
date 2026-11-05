@@ -163,7 +163,9 @@ class ChatFloatingWindows(
                         chatService.handleToolApproval(conversationId, toolCallId, approved)
                     },
                     onStop = { appScope.launch { chatService.stopGeneration(conversationId) } },
-                    onSend = { text -> chatService.sendMessage(conversationId, listOf(UIMessagePart.Text(text))) },
+                    onSend = { text ->
+                        appScope.launch { chatService.sendUserMessage(conversationId, listOf(UIMessagePart.Text(text))) }
+                    },
                     onResumeQueue = { chatService.resumeMessageQueue(conversationId) },
                 )
             }

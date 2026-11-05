@@ -49,6 +49,7 @@ data class AgentTeamPanelState(
     val leader: TeamLeaderListItem,
     val members: List<TeamMemberListItem>,
     val tasks: List<TeamTask>,
+    val acceptedTaskIds: Set<Uuid> = emptySet(),
 )
 
 /**
@@ -123,7 +124,11 @@ fun AgentTeamSheet(
                     Hint(stringResource(R.string.agent_team_no_tasks))
                 } else {
                     state.tasks.forEach { task ->
-                        TaskRow(task = task, allTasks = state.tasks)
+                        TaskRow(
+                            task = task,
+                            allTasks = state.tasks,
+                            acceptedTaskIds = state.acceptedTaskIds,
+                        )
                     }
                 }
             }
@@ -233,9 +238,16 @@ private fun ConversationRow(
 }
 
 @Composable
-private fun TaskRow(task: TeamTask, allTasks: List<TeamTask>) {
+private fun TaskRow(
+    task: TeamTask,
+    allTasks: List<TeamTask>,
+    acceptedTaskIds: Set<Uuid>,
+) {
     val byId = allTasks.associateBy { it.id }
-    val blocked = task.blockedBy.any { byId[it]?.status != TeamTaskStatus.DONE }
+    // 与派发门禁一致：依赖是「DONE 但未验收」也算未完成
+    val blocked = task.blockedBy.any { dep ->
+        byId[dep]?.let { it.status != TeamTaskStatus.DONE || it.id !in acceptedTaskIds } ?: true
+    }
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -258,6 +270,14 @@ private fun TaskRow(task: TeamTask, allTasks: List<TeamTask>) {
                 task.ownerName?.takeIf { it.isNotBlank() }?.let { append(" · @").append(it) }
                 if (blocked) append(" · ").append(stringResource(R.string.agent_team_blocked))
                 if (task.blockedBy.isNotEmpty()) append(" · deps ").append(task.blockedBy.size)
+                if (task.status == TeamTaskStatus.DONE) {
+                    append(" · ").append(
+                        stringResource(
+                            if (task.id in acceptedTaskIds) R.string.agent_team_accepted
+                            else R.string.agent_team_pending_acceptance
+                        )
+                    )
+                }
             }
             Text(
                 text = meta,

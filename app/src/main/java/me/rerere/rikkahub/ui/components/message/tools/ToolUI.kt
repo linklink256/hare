@@ -84,6 +84,21 @@ interface ToolUIRenderer {
     }
 }
 
+/** 队友回报槽位：占位时显示“等待中”，回填后显示是谁的回报 */
+private object ExpectReportToolUI : ToolUIRenderer {
+    override val toolName: String get() = "expect_report"
+
+    @Composable
+    override fun title(context: ToolUIContext): String {
+        val handle = context.arguments.getStringContent("handle").orEmpty()
+        return if (context.tool.isDeferredPlaceholder) {
+            stringResource(R.string.chat_message_tool_waiting_teammate, handle)
+        } else {
+            stringResource(R.string.chat_message_tool_report_from, handle)
+        }
+    }
+}
+
 /** 未注册工具使用的默认渲染器, 全部行为来自 [ToolUIRenderer] 的默认实现 */
 private object DefaultToolUIRenderer : ToolUIRenderer {
     override val toolName: String get() = ""
@@ -110,6 +125,7 @@ object ToolUIRegistry {
         ReadFileToolUI,
         WriteFileToolUI,
         ShellToolUI,
+        ExpectReportToolUI,
     ).plus(MemoryFileToolUI.all).associateBy { it.toolName }
 
     /** 查找工具对应的渲染器, 未注册时返回默认渲染器 */
