@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -30,14 +31,18 @@ import me.rerere.rikkahub.ui.components.ai.rememberModelListState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.CardGroupIcon
+import me.rerere.rikkahub.ui.components.ui.CardGroupValue
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.ui.components.OutlinedNumberInput
 import org.koin.androidx.compose.koinViewModel
+import kotlin.math.roundToInt
 
-/** 子代理（队友）参数：数量上限、任务板上限、等待超时。 */
+/** 子代理（队友）参数：数量上限、任务板上限、嵌套深度。 */
 private val MAX_MEMBERS_RANGE = 1..32
 private val MAX_TASKS_RANGE = 1..1024
-private val WAIT_TIMEOUT_RANGE = 10..600
+// 嵌套深度 1..3，1 表示队友不能再自己建队
+private val MAX_DEPTH_RANGE = 1..3
+private val ROOT_STEP_BUDGET_RANGE = 256..100000
 
 @Composable
 fun SettingAgentTeamPage() {
@@ -125,14 +130,34 @@ fun SettingAgentTeamPage() {
                 }
 
                 formItem(
-                    headlineContent = { Text(stringResource(R.string.setting_agent_team_wait_timeout)) },
-                    supportingContent = { Text(stringResource(R.string.setting_agent_team_wait_timeout_desc)) },
+                    headlineContent = { Text(stringResource(R.string.setting_agent_team_max_depth)) },
+                    supportingContent = { Text(stringResource(R.string.setting_agent_team_max_depth_desc)) },
+                    trailingContent = {
+                        CardGroupValue(settings.agentTeamMaxDepth.coerceIn(MAX_DEPTH_RANGE).toString())
+                    },
                 ) {
-                    OutlinedNumberInput(
-                        value = settings.agentTeamWaitTimeoutSeconds,
+                    Slider(
+                        value = settings.agentTeamMaxDepth.coerceIn(MAX_DEPTH_RANGE).toFloat(),
                         onValueChange = { value ->
                             vm.updateSettings {
-                                it.copy(agentTeamWaitTimeoutSeconds = value.coerceIn(WAIT_TIMEOUT_RANGE))
+                                it.copy(agentTeamMaxDepth = value.roundToInt().coerceIn(MAX_DEPTH_RANGE))
+                            }
+                        },
+                        valueRange = 1f..3f,
+                        steps = 1,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                formItem(
+                    headlineContent = { Text(stringResource(R.string.setting_agent_team_root_step_budget)) },
+                    supportingContent = { Text(stringResource(R.string.setting_agent_team_root_step_budget_desc)) },
+                ) {
+                    OutlinedNumberInput(
+                        value = settings.agentTeamRootStepBudget,
+                        onValueChange = { value ->
+                            vm.updateSettings {
+                                it.copy(agentTeamRootStepBudget = value.coerceIn(ROOT_STEP_BUDGET_RANGE))
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -147,7 +172,8 @@ fun SettingAgentTeamPage() {
                             it.copy(
                                 agentTeamMaxMembers = 8,
                                 agentTeamMaxTasks = 256,
-                                agentTeamWaitTimeoutSeconds = 120,
+                                agentTeamMaxDepth = 1,
+                                agentTeamRootStepBudget = 4096,
                             )
                         }
                     },
