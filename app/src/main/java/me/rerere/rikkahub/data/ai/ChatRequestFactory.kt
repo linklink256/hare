@@ -45,9 +45,12 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MemoryFile
 import me.rerere.rikkahub.data.model.TeamMember
+import me.rerere.rikkahub.data.model.TeamNestingRules
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.AgentTeamRepository
+import me.rerere.rikkahub.runtime.OperationInbox
+import me.rerere.rikkahub.data.ai.tools.RECEIVE_EVENTS
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
@@ -74,6 +77,8 @@ class ChatTurnContext(
     val tools: List<Tool>,
     /** 本会话是团队成员（子代理）会话时，对应名册记录；普通与领队会话为 null */
     val teamMember: TeamMember? = null,
+    /** 成员还能再建一层子队（maxDepth 门禁通过）；只给提示词说明边界，非成员恒 false */
+    val teamCanNest: Boolean = false,
 ) {
     internal val deferredCompression = DeferredTaskCompression()
 }
@@ -88,6 +93,7 @@ class ChatRequestFactory(
     private val agentTeamRepository: AgentTeamRepository,
     templateTransformer: TemplateTransformer,
     workspaceRepository: WorkspaceRepository,
+    private val operationInbox: OperationInbox,
 ) {
     private val inputTransformers: List<InputMessageTransformer> = listOf(
         TimeReminderTransformer,
@@ -112,6 +118,16 @@ class ChatRequestFactory(
         val model = settings.getChatModelOf(conversation)
             ?: throw IllegalStateException("No chat model selected")
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
+        val teamMember = agentTeamRepository.getMemberByConversation(conversation.id)
+        // 与工具层同一口径：成员所属队的 depth 再加一层仍在 maxDepth 之内才算可嵌套
+        val teamCanNest = teamMember
+            ?.let { member -> agentTeamRepository.getTeam(member.teamId) }
+            ?.let { team ->
+                TeamNestingRules.canNest(
+                    parentDepth = team.depth,
+                    maxDepth = TeamNestingRules.normalizeMaxDepth(settings.agentTeamMaxDepth),
+                )
+            } ?: false
         return ChatTurnContext(
             settings = settings,
             assistant = assistant,
@@ -129,7 +145,8 @@ class ChatRequestFactory(
                 workspaceCwd = conversation.workspaceCwd,
             ),
             // 按名册记录判定成员身份，不依赖团队开关、标题或工具是否存在；旧成员后续轮同样覆盖
-            teamMember = agentTeamRepository.getMemberByConversation(conversation.id),
+            teamMember = teamMember,
+            teamCanNest = teamCanNest,
         )
     }
 
@@ -439,6 +456,7 @@ class ChatRequestFactory(
                     assistant = assistant,
                     conversationSystemPrompt = turn.conversationSystemPrompt,
                     teamMember = turn.teamMember,
+                    canNest = turn.teamCanNest,
                 )
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
@@ -453,6 +471,14 @@ class ChatRequestFactory(
                 turn.tools.forEach { tool ->
                     appendLine()
                     append(tool.systemPrompt(turn.model, messages))
+                }
+                // 有界注意提示：每步至多一行，只说明有未读，不催、不累计
+                if (turn.tools.any { it.name == RECEIVE_EVENTS }) {
+                    val unread = operationInbox.unreadCount(turn.conversationId)
+                    if (unread > 0) {
+                        appendLine()
+                        append("$unread unread team event(s) are waiting. Call receive_events to consume them when you need them; do not poll.")
+                    }
                 }
             }
             if (system.isNotBlank()) {
