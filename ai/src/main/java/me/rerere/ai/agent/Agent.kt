@@ -58,10 +58,16 @@ interface AgentHooks {
     suspend fun interruptedStep(message: UIMessage) {}
 
     /**
-     * 运行中插话：每一步请求模型之前取一次，取到的消息接在本轮助手消息之后一起发给模型。
-     * 用于队友结果这类「不用等这一轮结束」的外部输入；返回空表示没有。
+     * 运行中插话：每次请求模型之前取一次；工具批里每个工具完成后也会取，用来收口剩余调用。
+     * 取到的消息接在本轮助手消息之后一起发给模型；返回空表示没有。
      */
     suspend fun drainSteer(): List<UIMessage> = emptyList()
+
+    /** 工具真正开始执行前调用（审批通过、即将产生副作用）；默认什么都不做。 */
+    suspend fun onToolStarted(toolCallId: String, toolName: String, input: String) {}
+
+    /** 工具执行结束（成功或失败）后调用；[error] 非空表示这次执行失败。默认什么都不做。 */
+    suspend fun onToolFinished(toolCallId: String, output: String?, error: Throwable?) {}
 }
 
 data class StepRequest(
@@ -89,6 +95,9 @@ sealed interface AgentFinishReason {
 
     /** 达到 [AgentRequest.maxSteps]，最后一步调用的工具已经执行，但模型还没有回复 */
     data object StepLimitReached : AgentFinishReason
+
+    /** 连续多步调用完全相同的工具（名字与入参都一样）：判定卡住，提前收尾而不是烧完步数预算 */
+    data object Stalled : AgentFinishReason
 }
 
 /**

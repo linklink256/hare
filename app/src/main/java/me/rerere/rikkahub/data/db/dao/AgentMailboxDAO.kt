@@ -109,10 +109,67 @@ interface AgentMailboxDAO {
         staleBefore: Long,
     ): AgentMailboxEntity?
 
+    /** 幽灵数据清理：某 target 下早于 cutOff 且未 ACK 的行（含卡在 CLAIMED 的）。 */
+    @Query(
+        "SELECT * FROM agent_mailbox WHERE target_conversation_id = :target AND deliver_state <> :ackedState " +
+            "AND created_at < :cutOff ORDER BY created_at ASC LIMIT :limit"
+    )
+    suspend fun listUndeliveredBefore(
+        target: String,
+        ackedState: String,
+        cutOff: Long,
+        limit: Int,
+    ): List<AgentMailboxEntity>
+
+    /** 自动唤醒用：结果/失败/提问都算"这个队友有东西要交"，取最近一条未 ACK。 */
+    @Query(
+        "SELECT * FROM agent_mailbox WHERE target_conversation_id = :target AND source_conversation_id = :source " +
+            "AND kind IN ('RESULT','FAILURE','ASK','NOTICE') AND deliver_state <> :ackedState " +
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+    )
+    suspend fun findUndeliveredWake(target: String, source: String, ackedState: String): AgentMailboxEntity?
+
+    /** 只领取指定类别的可领取行：团队领队用它跳过 RESULT/FAILURE（结果只走工具通道）。 */
+    @Query(
+        """
+        SELECT * FROM agent_mailbox
+        WHERE target_conversation_id = :target
+            AND kind IN (:kinds)
+            AND (
+                deliver_state = :pendingState
+                OR (deliver_state = :claimedState AND claimed_at IS NOT NULL AND claimed_at <= :staleBefore)
+            )
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        """
+    )
+    suspend fun findClaimableOfKinds(
+        target: String,
+        kinds: List<String>,
+        pendingState: String,
+        claimedState: String,
+        staleBefore: Long,
+    ): AgentMailboxEntity?
+
     @Query(
         "SELECT * FROM agent_mailbox WHERE target_conversation_id = :target ORDER BY created_at ASC, id ASC LIMIT :limit"
     )
     suspend fun listForTarget(target: String, limit: Int): List<AgentMailboxEntity>
+
+    /**
+     * 按 (target, source) 取最近一条未 ACK 的 RESULT/FAILURE。
+     * 工具通道用它取结果，不受邮箱里已 ACK 历史行数影响。
+     */
+    @Query(
+        "SELECT * FROM agent_mailbox WHERE target_conversation_id = :target AND source_conversation_id = :source " +
+            "AND kind IN ('RESULT','FAILURE') AND deliver_state <> :ackedState " +
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+    )
+    suspend fun findUndeliveredResult(
+        target: String,
+        source: String,
+        ackedState: String,
+    ): AgentMailboxEntity?
 
     /** 未 ACK 观察：给状态投影用，按 FIFO 输出；不包含 body 之外的历史拼接逻辑。 */
     @Query(

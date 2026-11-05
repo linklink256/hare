@@ -77,6 +77,14 @@ data class AgentRunEntity(
     val startedAt: Long?,
     @ColumnInfo("finished_at")
     val finishedAt: Long?,
+    /** 逻辑代次：只在取消/替代时递增；R2 恒 0（持久列，语义归 R4）。 */
+    @ColumnInfo("execution_generation", defaultValue = "0")
+    val executionGeneration: Long = 0L,
+    /** 预算预留步数；R5 才写。 */
+    @ColumnInfo("reserved_steps", defaultValue = "0")
+    val reservedSteps: Int = 0,
+    @ColumnInfo("cancel_requested_at")
+    val cancelRequestedAt: Long? = null,
 )
 
 /**
@@ -111,4 +119,11 @@ data class AgentRunEventEntity(
     val stepsUsed: Int?,
     @ColumnInfo("created_at")
     val createdAt: Long,
+    /** R3 写事件时才填，R2 零写入。 */
+    @ColumnInfo("operation_id")
+    val operationId: String? = null,
+    @ColumnInfo("step_id")
+    val stepId: String? = null,
+    @ColumnInfo("step_no")
+    val stepNo: Int? = null,
 )

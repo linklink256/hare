@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.completeWith
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,7 +26,13 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import me.rerere.ai.agent.AgentEvent
 import me.rerere.ai.agent.AgentHooks
@@ -51,8 +58,11 @@ import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.prompts.buildCompressPrompt
 import me.rerere.rikkahub.data.ai.sameContextExceptReasoningFinishTime
 import me.rerere.rikkahub.data.ai.tools.InvalidMcpServerNamesException
+import me.rerere.rikkahub.data.ai.tools.AskLeadRecord
 import me.rerere.rikkahub.data.ai.tools.MemberReportSink
+import me.rerere.rikkahub.data.ai.tools.TeamAskSink
 import me.rerere.rikkahub.data.ai.tools.shouldUseExternalWebSearch
+import me.rerere.rikkahub.data.ai.tools.AgentTeamToolNames
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.event.AppEvent
@@ -64,6 +74,8 @@ import me.rerere.rikkahub.data.model.AgentRunState
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.StepProgressRejection
+import me.rerere.rikkahub.data.model.TeamAsk
+import me.rerere.rikkahub.data.model.TeamAskAnswerRules
 import me.rerere.rikkahub.data.model.TeamMember
 import me.rerere.rikkahub.data.model.needsAutomaticConversationTitle
 import me.rerere.rikkahub.data.model.bindConfig
@@ -103,6 +115,18 @@ import me.rerere.rikkahub.data.repository.NewAgentRun
 import me.rerere.rikkahub.data.repository.RecordStepsResult
 import me.rerere.rikkahub.data.repository.RunTransitionAndEnqueueResult
 import me.rerere.rikkahub.data.repository.RunTransitionResult
+import me.rerere.rikkahub.data.repository.OperationStore
+import me.rerere.rikkahub.data.repository.ToolOperationStore
+import me.rerere.rikkahub.runtime.Admission
+import me.rerere.rikkahub.runtime.AdmitKind
+import me.rerere.rikkahub.runtime.AdmitRequest
+import me.rerere.rikkahub.runtime.FenceToken
+import me.rerere.rikkahub.runtime.OperationAccept
+import me.rerere.rikkahub.runtime.OperationInbox
+import me.rerere.rikkahub.runtime.OperationRecorder
+import me.rerere.rikkahub.runtime.OperationRuntime
+import me.rerere.rikkahub.runtime.acceptedReceiptOf
+import me.rerere.rikkahub.runtime.RunCoordinator
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import java.net.ConnectException
@@ -114,6 +138,15 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+
+/** 自动续跑的合并窗口：窗口内到达的多条队友结果只开一轮 */
+private const val AUTO_RESUME_COALESCE_MILLIS = 2_000L
+
+/** 连续自动续跑的硬上限，超过就停下等用户开口，避免两个 agent 互相喂消息空转 */
+private const val MAX_AUTO_RESUME_STREAK = 6
+
+/** 父 Run 被取消/失败时，后代的取消原因（契约固定字面量） */
+private const val PARENT_CANCELLED_REASON = "parent_cancelled"
 
 /**
  * 一个 Run 进入新阶段时的对外事件；relay 只认 runId，不从会话最新消息猜是哪一轮。
@@ -156,8 +189,14 @@ class ChatService(
     private val folderRepository: FolderRepository,
     private val agentTeamRepository: me.rerere.rikkahub.data.repository.AgentTeamRepository,
     private val teamExecutionGate: TeamExecutionGate,
+    private val runCoordinator: RunCoordinator,
     private val agentRunStore: AgentRunStore,
     private val agentMailboxStore: AgentMailboxStore,
+    private val toolOperationStore: ToolOperationStore,
+    private val operationStore: OperationStore,
+    private val operationRecorder: OperationRecorder,
+    private val operationRuntime: OperationRuntime,
+    private val operationInbox: OperationInbox,
 ) {
     // 删除队友会话时暂存名册行，撤销删除时放回去（正常撤销后立即移除）
     private val deletedTeamMembers: MutableMap<Uuid, TeamMember> = java.util.concurrent.ConcurrentHashMap()
@@ -198,6 +237,15 @@ class ChatService(
         }
     }
 
+    /** 同一会话的迟到工具回填串行化：并发的两个结果不能同时判断"空闲"然后只起一个续跑 */
+    private val deferredToolLocks = java.util.concurrent.ConcurrentHashMap<Uuid, Mutex>()
+
+    /** 待触发的自动续跑（按会话去抖） */
+    private val autoResumeJobs = java.util.concurrent.ConcurrentHashMap<Uuid, Job>()
+
+    /** 连续自动续跑次数，用户自己发消息时清零 */
+    private val autoResumeStreak = java.util.concurrent.ConcurrentHashMap<Uuid, Int>()
+
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
         store = conversationStore,
@@ -223,6 +271,8 @@ class ChatService(
     init {
         // report_back 的落点：校验成员身份与非终态 Run 后暂存本轮汇报
         MemberReportSink.recorder = { conversationId, payload -> recordMemberReport(conversationId, payload) }
+        // ask_lead 的落点：成员提问行进领队收件箱，Run 在同一事务里转入等待答复
+        TeamAskSink.asker = { conversationId, question -> recordTeamAsk(conversationId, question) }
         // 让 gate 能在一轮真正结束时采样一次审批状态（只读、不建会话），
         // 这样队友会话被空闲回收后分组仍稳定；任务结束时无 UI 观察也照常记录。
         teamExecutionGate.approvalSampler = { conversationId -> peekAwaitingApproval(conversationId) }
@@ -232,6 +282,14 @@ class ChatService(
             // 恢复结果必须如实传到 await 方：成功才算屏障通过，失败要能被诊断
             try {
                 agentRunStore.recoverInterrupted()
+                // 残留 INTENT 说明工具可能已执行但结果没落库：标 UNCERTAIN，只作「必须停」的证据
+                runCatching { toolOperationStore.markInterruptedAsUncertain() }
+                    .onSuccess { if (it > 0) Log.w(TAG, "marked $it leftover tool operations as UNCERTAIN") }
+                    .onFailure { Log.w(TAG, "mark leftover tool operations failed", it) }
+                // 跨进程残留的 operation 只降级为 UNKNOWN；失败不得让恢复屏障整体失败
+                runCatching { operationStore.markInterruptedAsUnknown() }
+                    .onSuccess { if (it > 0) Log.w(TAG, "marked $it leftover runtime operations as UNKNOWN") }
+                    .onFailure { Log.w(TAG, "mark leftover runtime operations failed", it) }
                 runRecoveryDone.complete(Unit)
             } catch (e: CancellationException) {
                 runRecoveryDone.completeExceptionally(e)
@@ -364,6 +422,10 @@ class ChatService(
                 is RunTransitionResult.Conflict -> Unit
                 is RunTransitionResult.IllegalTransition -> {
                     Log.w(TAG, "run $runId transition ${result.from}->${result.to} rejected")
+                    // 等待答复的轮次结束时不该判成完成：Run 留在 WAITING_INPUT，等 resume
+                    if (result.from == AgentRunState.WAITING_INPUT && result.to == AgentRunState.COMPLETED) {
+                        Log.i(TAG, "run $runId ended the turn while waiting for an answer; keeping WAITING_INPUT")
+                    }
                     return null
                 }
 
@@ -373,16 +435,11 @@ class ChatService(
         return null
     }
 
-    /** 准入后标记 RUNNING，必须在 gate permit 内调用 */
-    private suspend fun markRunRunning(runId: Uuid?): AgentRun? {
-        if (runId == null) return null
-        awaitRunRecovery()
-        return transitionRun(runId, AgentRunState.RUNNING)?.also { emitRunEvent(it) }
-    }
-
-    /** 精确绑定本轮回复节点；已绑同一 id 幂等，终态拒绝 */
-    private suspend fun bindRunReply(runId: Uuid?, replyMessageId: Uuid?) {
+    /** 精确绑定本轮回复节点；已绑同一 id 幂等，终态拒绝；fence 失效则跳过 */
+    private suspend fun bindRunReply(runId: Uuid?, replyMessageId: Uuid?, fence: FenceToken? = null) {
         if (runId == null || replyMessageId == null) return
+        // fence 只收紧本处写入：失效 lease 的迟到绑定直接跳过
+        if (fence != null && !runCoordinator.isCurrent(fence)) return
         repeat(3) {
             val current = agentRunStore.get(runId) ?: return
             when (val result = agentRunStore.bindReply(runId, current.stateRevision, replyMessageId.toString())) {
@@ -402,8 +459,15 @@ class ChatService(
      * 记累计步数：必须显式成功或确认幂等（已记录更大值）。
      * 冲突有限重试；缺行/非法拒绝/DB 失败向上抛，阻止继续烧模型并留下可诊断失败。
      */
-    private suspend fun recordRunSteps(runId: Uuid?, baseline: RunStepBaseline, messageStepCount: Int) {
+    private suspend fun recordRunSteps(
+        runId: Uuid?,
+        baseline: RunStepBaseline,
+        messageStepCount: Int,
+        fence: FenceToken? = null,
+    ) {
         if (runId == null) return
+        // fence 只收紧本处写入：失效 lease 的迟到计步直接跳过
+        if (fence != null && !runCoordinator.isCurrent(fence)) return
         val used = AgentRunLifecycle.stepsAfterStep(baseline, messageStepCount)
         repeat(3) {
             val current = agentRunStore.get(runId)
@@ -411,7 +475,11 @@ class ChatService(
             // 终态已有完成计步：不再反写
             if (current.isTerminal) return
             when (val result = agentRunStore.recordSteps(runId, current.stateRevision, used)) {
-                is RecordStepsResult.Applied -> return
+                is RecordStepsResult.Applied -> {
+                    // 根账本按本次增量累加：同一 Run 的重复记录不会重复计费
+                    addRootStepsQuietly(current.teamId, result.run.stepsUsed - current.stepsUsed)
+                    return
+                }
                 is RecordStepsResult.Conflict -> Unit
                 is RecordStepsResult.Rejected -> {
                     // DECREASING 表示库中已是更大的累计值：按幂等成功返回
@@ -425,6 +493,15 @@ class ChatService(
         error("run $runId record steps conflicted after retries")
     }
 
+    /** 步数落库成功后把增量记到根团队；记账失败只记日志，不回滚已落库的 Run */
+    private suspend fun addRootStepsQuietly(teamId: Uuid?, delta: Int) {
+        if (teamId == null || delta <= 0) return
+        runCatching {
+            val rootTeamId = agentTeamRepository.getTeam(teamId)?.rootTeamId ?: return@runCatching
+            agentTeamRepository.addRootSteps(rootTeamId, delta)
+        }.onFailure { Log.w(TAG, "add root steps failed for team $teamId (+$delta)", it) }
+    }
+
     /** 最终转录已 flush 后提交本轮迁移；只映射 finish reason，不改 PostTurn 判断 */
     private suspend fun commitRunAfterTurn(
         runId: Uuid?,
@@ -432,7 +509,11 @@ class ChatService(
         snapshot: UIMessage? = null,
     ) {
         if (runId == null) return
-        val to = AgentRunLifecycle.stateFor(reason)
+        // 本回合结束时仍有已受理的后台 operation：领队进入 WAITING_OPERATION，等消费侧唤醒
+        val hasOpenOperations = runCatching {
+            operationStore.listForRun(runId).any { me.rerere.rikkahub.data.model.RuntimeOperationRules.isOpen(it.state) }
+        }.getOrDefault(false)
+        val to = AgentRunLifecycle.stateFor(reason, hasOpenOperations)
         val body = snapshot?.toText()
         transitionRunWithResultNotice(runId, to, AgentRunLifecycle.reasonFor(reason), body, snapshot?.id)
             ?.let { emitRunEvent(it, snapshot.takeIf { _ -> reason is AgentFinishReason.Completed }) }
@@ -449,8 +530,9 @@ class ChatService(
         bodyText: String?,
         replyMessageId: Uuid?,
     ): AgentRun? {
-        val entry = buildResultMailboxEntry(runId, to, bodyText, replyMessageId) ?: return transitionRun(runId, to, reason)
-        return when (
+        val entry = buildResultMailboxEntry(runId, to, bodyText, replyMessageId)
+            ?: return transitionRun(runId, to, reason).also { if (it != null) cancelDescendantsIfTerminal(runId, to) }
+        val applied = when (
             val result = agentRunStore.transitionAndEnqueue(
                 runId = runId,
                 expectedRevision = agentRunStore.get(runId)?.stateRevision
@@ -477,6 +559,33 @@ class ChatService(
                 }
             }
         }
+        // 迁移真的落库了才级联：被拒/冲突时后代照旧
+        if (applied != null) cancelDescendantsIfTerminal(runId, to)
+        return applied
+    }
+
+    /** 取消/失败落库后，沿 parentRunId 链路把后代非终态 Run 一起收尾 */
+    private suspend fun cancelDescendantsIfTerminal(runId: Uuid, to: AgentRunState) {
+        if (to != AgentRunState.CANCELLED && to != AgentRunState.FAILED) return
+        runCatching {
+            for (child in agentRunStore.listDescendantRuns(runId)) {
+                // 终态判定复用 Run 自己的规则，不在这里硬编码状态集合
+                if (AgentRunRules.isTerminal(child.state)) continue
+                when (
+                    val result = agentRunStore.transition(
+                        child.runId,
+                        child.stateRevision,
+                        AgentRunState.CANCELLED,
+                        PARENT_CANCELLED_REASON,
+                    )
+                ) {
+                    is RunTransitionResult.Applied -> emitRunEvent(result.run)
+                    // 别人刚改了它的状态：它自己的收尾路径会处理，不覆盖
+                    is RunTransitionResult.Conflict -> Log.i(TAG, "descendant run ${child.runId} changed; keep as is")
+                    else -> Unit
+                }
+            }
+        }.onFailure { Log.w(TAG, "cancel descendants of run $runId failed", it) }
     }
 
     /** 只有团队成员会话的终态才需要给领队投递；返回 null 表示走普通迁移 */
@@ -526,6 +635,39 @@ class ChatService(
         }
     }
 
+    /**
+     * 领队会话的回合 Run：只在该会话确实拥有一支队时创建，用于步数/预算/终态。
+     * 普通聊天没有队，返回 null，行为保持不变。
+     */
+    private suspend fun createLeadRunIfTeam(conversationId: Uuid): Uuid? {
+        val team = agentTeamRepository.getTeamByLeadConversation(conversationId) ?: return null
+        // 上一次领队回合在等后台结果：复用它，而不是每轮新建一个 Run（adopt）
+        val latest = agentRunStore.latestForConversation(conversationId)
+        if (latest != null && latest.state == me.rerere.rikkahub.data.model.AgentRunState.WAITING_OPERATION) {
+            return latest.runId
+        }
+        return when (
+            val created = agentRunStore.create(
+                NewAgentRun(
+                    conversationId = conversationId,
+                    teamId = team.id,
+                    agentId = null,
+                    sourceKey = "lead:$conversationId:${Uuid.random()}",
+                    attemptNo = 1,
+                    // null = 沿用助手自己的 maxSteps，不用 Run 的 256 覆盖普通对话配置
+                    stepLimit = null,
+                )
+            )
+        ) {
+            is CreateRunResult.Created -> created.run.runId
+            is CreateRunResult.Duplicate -> created.existing.runId
+            is CreateRunResult.Rejected -> {
+                Log.w(TAG, "lead run rejected: ${created.reason}")
+                null
+            }
+        }
+    }
+
     /** 成员直发/重生成时补建新 attempt；非成员返回 null（普通会话不跟踪） */
     private suspend fun createMemberRun(
         conversationId: Uuid,
@@ -540,12 +682,18 @@ class ChatService(
             buildJsonObject { put("text", raw) }.toString()
                 .takeIf { it.length <= AgentRunRules.MAX_INPUT_JSON_CHARS }
         }
+        // 父 Run = 该成员所属队的 lead 会话当前仍在跑的 Run；与派活路径同一口径（终态不接）
+        val parentRunId = agentTeamRepository.getTeam(member.teamId)
+            ?.leadConversationId
+            ?.takeIf { it != conversationId }
+            ?.let { lead -> agentRunStore.latestForConversation(lead)?.takeIf { !it.isTerminal }?.runId }
         return when (
             val result = agentRunStore.create(
                 NewAgentRun(
                     conversationId = conversationId,
                     teamId = member.teamId,
                     agentId = member.id,
+                    parentRunId = parentRunId,
                     previousRunId = previousRunId,
                     sourceKey = sourceKey,
                     attemptNo = attemptNo,
@@ -576,6 +724,113 @@ class ChatService(
 
     /** 取走本轮汇报（终态投递时消费一次） */
     private fun takeMemberReport(conversationId: Uuid): String? = memberReports.remove(conversationId)
+
+    /**
+     * ask_lead 落点：只有正在跑一轮的成员能提问。
+     *
+     * 提问行与 Run→WAITING_INPUT 在同一事务里落库；失败时不改 Run 状态，异常向上不吞。
+     */
+    private suspend fun recordTeamAsk(conversationId: Uuid, question: String): AskLeadRecord {
+        val member = agentTeamRepository.getMemberByConversation(conversationId)
+            ?: return AskLeadRecord(null, "ask_lead is only available to teammates")
+        val team = agentTeamRepository.getTeam(member.teamId)
+            ?: return AskLeadRecord(null, "team not found; ask_lead unavailable")
+        val run = agentRunStore.latestForConversation(conversationId)
+        if (run == null || run.state != AgentRunState.RUNNING) {
+            return AskLeadRecord(null, "ask_lead requires a running run (state=${run?.state ?: "none"})")
+        }
+        val correlationId = TeamAskAnswerRules.newCorrelationId()
+        TeamAskAnswerRules.validateAsk(correlationId, question)?.let { return AskLeadRecord(null, it) }
+        val entry = NewMailboxEntry(
+            targetConversationId = team.leadConversationId,
+            kind = MailboxKind.ASK,
+            idempotencyKey = TeamAskAnswerRules.askIdempotencyKey(correlationId),
+            teamId = member.teamId,
+            sourceConversationId = conversationId,
+            runId = run.runId,
+            bodyText = TeamAskAnswerRules.encodeAsk(TeamAsk(correlationId, question.trim(), member.name)),
+            bodyRef = null,
+        )
+        return when (
+            val result = agentRunStore.transitionAndEnqueue(
+                runId = run.runId,
+                expectedRevision = run.stateRevision,
+                to = AgentRunState.WAITING_INPUT,
+                reason = "awaiting_input",
+                now = Instant.now(),
+                entry = entry,
+            )
+        ) {
+            is RunTransitionAndEnqueueResult.Applied -> {
+                // 提问也是一次可观测的状态迁移：领队的 await_teammate 靠它被唤醒拿问题
+                emitRunEvent(result.run)
+                AskLeadRecord(correlationId, null)
+            }
+            is RunTransitionAndEnqueueResult.Rejected ->
+                AskLeadRecord(null, "run could not be moved to waiting_input; question not sent")
+
+            is RunTransitionAndEnqueueResult.MailboxRejected ->
+                AskLeadRecord(null, "question not queued (${result.reason.name.lowercase()}); run unchanged")
+        }
+    }
+
+    /**
+     * 成员轮开始前把领队答复注入转录，每条只注入一次。
+     * FIFO：遇到非 ANSWER 行就停下，不跳过队首的其它类别；DB 失败只记日志、不 ack。
+     */
+    private suspend fun drainTeamAnswers(session: ConversationSession) {
+        if (agentTeamRepository.getMemberByConversation(session.id) == null) return
+        while (true) {
+            try {
+                // 只领 ANSWER：按任意类别领取会把队首的 RESULT 抢走并留在 CLAIMED，结果永远送不到
+                val entry = when (
+                    val claimed = agentMailboxStore.claimNextOfKinds(
+                        session.id,
+                        setOf(MailboxKind.ANSWER),
+                    )
+                ) {
+                    is MailboxClaimResult.Claimed -> claimed.entry
+                    MailboxClaimResult.None -> return
+                }
+                if (entry.kind != MailboxKind.ANSWER) return
+                // 重投去重：转录里已有同 id 就不再追加，直接确认
+                if (session.state.value.currentMessages.any { it.id == entry.id }) {
+                    ackTeamAnswerQuietly(entry)
+                    continue
+                }
+                val parsed = entry.bodyText?.let { TeamAskAnswerRules.parseAnswer(it) }
+                val text = if (parsed != null) {
+                    TeamAskAnswerRules.renderAnswerForMember(parsed)
+                } else {
+                    entry.bodyText?.takeIf { it.isNotBlank() }
+                        ?: "【领队答复正文缺失：${entry.bodyRef ?: "-"}】"
+                }
+                session.update { conversation ->
+                    conversation.copy(
+                        messageNodes = conversation.messageNodes + UIMessage(
+                            id = entry.id,
+                            role = MessageRole.USER,
+                            parts = listOf(UIMessagePart.Text(text)),
+                        ).toMessageNode()
+                    )
+                }
+                session.flush()
+                ackTeamAnswerQuietly(entry)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "drain team answers failed", e)
+                return
+            }
+        }
+    }
+
+    /** ack 失败只记日志：下次租约过期重领会因转录里同 id 去重 */
+    private suspend fun ackTeamAnswerQuietly(entry: AgentMailboxEntry) {
+        runCatching {
+            agentMailboxStore.ack(entry.id, entry.claimToken.orEmpty(), entry.revision)
+        }.onFailure { Log.w(TAG, "ack team answer ${entry.id} failed", it) }
+    }
 
     /** 按精确消息 id 取当前输出：先内存态，再库；不为查询建会话 */
     suspend fun getMessage(conversationId: Uuid, messageId: Uuid): UIMessage? {
@@ -769,6 +1024,21 @@ class ChatService(
         }
     }
 
+    /**
+     * 用户输入：正在生成就把这句话插进当前轮（steer），插不了再走普通入队。
+     * 返回 true 表示已插话、没有进队列。
+     */
+    suspend fun sendUserMessage(
+        conversationId: Uuid,
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        allowSteer: Boolean = true,
+    ): Boolean {
+        if (answer && allowSteer && steerGeneration(conversationId, content)) return true
+        sendMessage(conversationId, content, answer)
+        return false
+    }
+
     /** 只读：该会话的消息队列是否处于暂停（失败或用户停止后）；未加载时不创建会话。 */
     fun isMessageQueuePaused(conversationId: Uuid): Boolean =
         sessionManager.get(conversationId)?.messageQueue?.state?.value?.paused == true
@@ -781,6 +1051,202 @@ class ChatService(
      * 团队通知：对方正在生成就作为插话在下一步送达；否则只入队，
      * 且不解除由「用户停止 / 上一轮失败」造成的队列暂停（暂停期间留在队列里等用户恢复）。
      */
+    /**
+     * 迟到的工具结果回填：把报告写进当初那条 `expect_report`（旧名 await_teammate）调用的 output，并在会话空闲时自动续跑。
+     * 不新增任何用户消息；会话正忙时返回 false（结果留在 mailbox，交给回合结束补投）。
+     */
+    suspend fun completeDeferredToolCall(
+        conversationId: Uuid,
+        toolName: String,
+        handle: String,
+        output: List<UIMessagePart>,
+        deliveryKey: String? = null,
+    ): Boolean = deferredToolLocks.getOrPut(conversationId) { Mutex() }.withLock {
+        completeDeferredToolCallLocked(conversationId, toolName, handle, output, deliveryKey)
+    }
+
+    private suspend fun completeDeferredToolCallLocked(
+        conversationId: Uuid,
+        toolName: String,
+        handle: String,
+        output: List<UIMessagePart>,
+        deliveryKey: String?,
+    ): Boolean {
+        val session = sessionManager.getOrCreate(conversationId)
+        ensureInitialized(session)
+        // 正在生成时不能改写历史：AgentLoop 手里还有同一消息的副本，会被下一次 update 覆盖
+        if (session.getJob() != null) return false
+        // 用户停过（队列暂停或上一轮就是被取消的）：结果只留邮箱，等用户下次开口再投
+        if (isMessageQueuePaused(conversationId)) return false
+        if (isStoppedByUser(conversationId)) return false
+        // 同一条 mailbox 行可能被重复投递：这个键已经写过就直接算成功，避免二次改写和二次续跑
+        if (deliveryKey != null && session.state.value.currentMessages.any { message ->
+                message.parts.any { part ->
+                    part is UIMessagePart.Tool &&
+                        (part.metadata?.get("deliveredKey") as? JsonPrimitive)?.contentOrNull == deliveryKey
+                }
+            }
+        ) return true
+        var matched = false
+        var replacedAnchor = false
+        session.update { conversation ->
+            val nodes = conversation.messageNodes.map { node ->
+                val message = node.currentMessage
+                if (message.role != MessageRole.ASSISTANT) return@map node
+                var nodeChanged = false
+                val parts = message.parts.map { part ->
+                    // 旧会话里可能还挂着 await_teammate 的占位，改名后也要能回填
+                    val nameMatches = part is UIMessagePart.Tool && (
+                        part.toolName == toolName ||
+                            (toolName == AgentTeamToolNames.EXPECT_REPORT &&
+                                part.toolName == AgentTeamToolNames.LEGACY_AWAIT_TEAMMATE)
+                        )
+                    if (!replacedAnchor && part is UIMessagePart.Tool && nameMatches &&
+                        handle.trim().lowercase() in part.inputHandles() &&
+                        part.isDeferredPlaceholder
+                    ) {
+                        nodeChanged = true
+                        replacedAnchor = true
+                        part.copy(
+                            output = output,
+                            metadata = deliveryMetadata(part.metadata, deliveryKey),
+                        )
+                    } else {
+                        part
+                    }
+                }
+                if (!nodeChanged) {
+                    node
+                } else {
+                    matched = true
+                    node.copy(
+                        messages = node.messages.toMutableList()
+                            .also { it[node.selectIndex] = message.copy(parts = parts) }
+                    )
+                }
+            }
+            if (!matched) conversation else conversation.copy(messageNodes = nodes)
+        }
+        if (!matched) {
+            // 模型派完活没登记 expect_report 就结束了回合：没有可回填的锚点，也不能把结果丢掉。
+            // 补一条独立的 team_event（不是 await 调用）再续跑，不伪造用户消息，也不冒充工具调用。
+            val text = output.filterIsInstance<UIMessagePart.Text>()
+                .joinToString("\n") { it.text }
+                .trim()
+            if (text.isBlank()) return false
+            val synthetic = UIMessagePart.Tool(
+                toolCallId = Uuid.random().toString(),
+                toolName = AgentTeamToolNames.TEAM_EVENT,
+                input = buildJsonObject {
+                    put("event", "settled")
+                    put("member", handle)
+                }.toString(),
+                output = output,
+                metadata = deliveryMetadata(null, deliveryKey),
+            )
+            session.update { conversation ->
+                val lastNode = conversation.messageNodes.lastOrNull()
+                val last = lastNode?.currentMessage
+                if (lastNode != null && last != null && last.role == MessageRole.ASSISTANT) {
+                    // 追加到本轮最后一条助手消息：请求侧就是「这一轮调用了 expect_report 并拿到结果」
+                    conversation.copy(
+                        messageNodes = conversation.messageNodes.dropLast(1) + lastNode.copy(
+                            messages = lastNode.messages.toMutableList()
+                                .also { it[lastNode.selectIndex] = last.copy(parts = last.parts + synthetic) }
+                        )
+                    )
+                } else {
+                    conversation.copy(
+                        messageNodes = conversation.messageNodes +
+                            UIMessage(role = MessageRole.ASSISTANT, parts = listOf(synthetic)).toMessageNode()
+                    )
+                }
+            }
+            session.flush()
+            scheduleAutoResume(conversationId)
+            return true
+        }
+        session.flush()
+        scheduleAutoResume(conversationId)
+        return true
+    }
+
+    /**
+     * 自动续跑去抖：同一窗口内到达的多条队友结果合并成一次续跑；
+     * 连续自动续跑超过上限就停下，结果留在历史里等用户开口。
+     */
+    private fun scheduleAutoResume(conversationId: Uuid) {
+        autoResumeJobs.remove(conversationId)?.cancel()
+        autoResumeJobs[conversationId] = appScope.launch {
+            delay(AUTO_RESUME_COALESCE_MILLIS)
+            autoResumeJobs.remove(conversationId)
+            val streak = autoResumeStreak.merge(conversationId, 1, Int::plus) ?: 1
+            if (streak > MAX_AUTO_RESUME_STREAK) {
+                Log.w(TAG, "auto resume streak=$streak reached limit, waiting for user")
+                return@launch
+            }
+            // 会话可能已被空闲回收：库里还有才重建，避免把已删除的会话复活成空会话
+            val session = sessionManager.get(conversationId)
+                ?: if (conversationRepo.existsConversationById(conversationId)) {
+                    sessionManager.getOrCreate(conversationId)
+                } else {
+                    null
+                }
+            session?.let { resumeConversationIfIdle(it) }
+        }
+    }
+
+    /** 新路径唤醒：只复用既有的去抖/限流自动续跑，不写转录、不 ACK。 */
+    fun resumeForInbox(conversationId: Uuid) = scheduleAutoResume(conversationId)
+
+    /** 回填时记录的投递键：同一条 mailbox 行重复投递时据此跳过 */
+    private fun deliveryMetadata(base: JsonObject?, key: String?): JsonObject? =
+        if (key == null) base
+        else JsonObject((base ?: JsonObject(emptyMap())) + ("deliveredKey" to JsonPrimitive(key)))
+
+    /** 没有用户消息的续跑：只在空闲、无待审批、队列未暂停、且不是用户刚停过的会话才启动。 */
+    private suspend fun resumeConversationIfIdle(session: ConversationSession) {
+        if (session.getJob() != null) return
+        if (session.state.value.isAwaitingToolApproval) return
+        if (isMessageQueuePaused(session.id)) return
+        if (isStoppedByUser(session.id)) return
+        val conversationId = session.id
+        val job = launchGenerationJob(conversationId = conversationId, keepAliveInBackground = true) {
+            try {
+                ensureInitialized(session)
+                runTurn(session)
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportFailure(session, e, R.string.error_title_generation)
+            }
+        }
+        session.setJob(job)
+    }
+
+    /**
+     * 这条会话是不是「用户主动停过、之后没再开新一轮」：看最近一条 Run。
+     * 停过就既不回填也不自动续跑，异步结果留在 mailbox 等用户下次说话。
+     */
+    private suspend fun isStoppedByUser(conversationId: Uuid): Boolean {
+        val run = agentRunStore.latestForConversation(conversationId) ?: return false
+        if (run.state != AgentRunState.CANCELLED) return false
+        return run.reason == AgentRunLifecycle.CANCELLED_REASON || run.reason == PARENT_CANCELLED_REASON
+    }
+
+    /** 兼容 await_teammate 的两种入参：handle（单数）与 handles（数组），统一 trim+小写 */
+    private fun UIMessagePart.Tool.inputHandles(): Set<String> {
+        val obj = inputAsJson() as? JsonObject ?: return emptySet()
+        val raw = buildList<String> {
+            (obj["handle"] as? JsonPrimitive)?.contentOrNull?.let { add(it) }
+            (obj["handles"] as? JsonArray)?.forEach { element ->
+                (element as? JsonPrimitive)?.contentOrNull?.let { add(it) }
+            }
+        }
+        return raw.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+    }
+
     suspend fun sendTeamNotice(
         conversationId: Uuid,
         content: List<UIMessagePart>,
@@ -825,12 +1291,53 @@ class ChatService(
                     session.messageQueue.enqueue(content, answer = false)
                 }
                 steered = true
-            } else {
+            } else if (!isMessageQueuePaused(session.id)) {
                 session.messageQueue.enqueue(content, answer = true)
                 dispatchNextQueuedMessage(conversationId)
             }
+            // 队列被用户停住时什么都不做：提示留在 mailbox，等用户下次开口再投
         }
         if (steered) enqueueSteerNotice(session, noticeId, texts)
+    }
+
+    /**
+     * 给正在生成的会话插话（领队改队友方向用）：和 sendTeamNotice 的忙分支同一条路径，
+     * 返回 false 表示没插——空闲、等审批、续写/重新生成没有安全锚点，调用方改走普通派活。
+     */
+    suspend fun steerGeneration(conversationId: Uuid, content: List<UIMessagePart>): Boolean {
+        if (content.isEmptyInputMessage()) return false
+        val texts = content.filterIsInstance<UIMessagePart.Text>().map { it.text }
+        if (texts.isEmpty()) return false
+        // 会话不在内存就不为一句插话把整段历史读起来
+        val session = sessionManager.get(conversationId) ?: return false
+        ensureInitialized(session)
+        val noticeId = Uuid.random()
+        val inserted = synchronized(session) {
+            // 忙/可插只认实际 Job：假活跃或已取消的 Job 没有安全插入点，暂停/待审批的轮次也不插
+            val busy = session.getJob()?.isActive == true &&
+                !session.state.value.isAwaitingToolApproval &&
+                !session.messageQueue.state.value.paused
+            val before = session.replyNodeId
+            if (!busy || before == null) return@synchronized false
+            val notice = UIMessage(id = noticeId, role = MessageRole.USER, parts = content.toList())
+            session.update { it.insertMessageBefore(before, notice) }
+            session.turnNotices.add(notice)
+            true
+        }
+        if (!inserted) return false
+        // 插话行落不下去就撤回刚插的节点并退回普通入队：不能让用户看见消息却没送进模型
+        if (!enqueueSteerNotice(session, noticeId, texts)) {
+            synchronized(session) {
+                session.update { conversation ->
+                    conversation.copy(
+                        messageNodes = conversation.messageNodes.filterNot { it.currentMessage.id == noticeId }
+                    )
+                }
+                session.turnNotices.removeAll { it.id == noticeId }
+            }
+            return false
+        }
+        return true
     }
 
     /** 插话持久化：同一条可见通知只落一行 STEER（idempotencyKey 由通知 id 派生） */
@@ -838,10 +1345,10 @@ class ChatService(
         session: ConversationSession,
         noticeMessageId: Uuid,
         texts: List<String>,
-    ) {
+    ): Boolean {
         val text = texts.joinToString("\n")
         val inline = text.takeIf { AgentRunLifecycle.bodyFitsInline(it) }
-        runCatching {
+        return runCatching {
             agentMailboxStore.enqueue(
                 NewMailboxEntry(
                     targetConversationId = session.id,
@@ -853,7 +1360,8 @@ class ChatService(
                     bodyRef = if (inline == null) "notice:$noticeMessageId" else null,
                 )
             )
-        }.onFailure { Log.w(TAG, "enqueue steer failed", it) }
+            true
+        }.onFailure { Log.w(TAG, "enqueue steer failed", it) }.getOrDefault(false)
     }
 
     /** ASSIGN 的送达确认：拿不到可领行只记日志，不阻断本轮 */
@@ -880,20 +1388,31 @@ class ChatService(
         val accepted = mutableListOf<UIMessage>()
         val claimed = mutableListOf<AgentMailboxEntry>()
         while (true) {
-            val entry = when (val result = agentMailboxStore.claimNext(session.id)) {
+            // 只领 STEER：按任意类别领取会顺手领走 RESULT 行，导致结果卡在 CLAIMED 无法投递
+            val entry = when (
+                val result = agentMailboxStore.claimNextOfKinds(
+                    session.id,
+                    setOf(MailboxKind.STEER),
+                )
+            ) {
                 is MailboxClaimResult.Claimed -> result.entry
                 MailboxClaimResult.None -> break
             }
-            // FIFO：遇到非 STEER 就停，不 continue 空转
             if (entry.kind != MailboxKind.STEER) break
-            // 只取本轮 Run 的插话；runId 为 null 视为 legacy 行仍接受
-            if (entry.runId != null && runId != null && entry.runId != runId) break
+            // 不是本轮的插话：它已作为可见节点留在转录里，直接 ack，别占着 CLAIMED 卡到 TTL
+            if (entry.runId != null && runId != null && entry.runId != runId) {
+                runCatching {
+                    agentMailboxStore.ack(entry.id, entry.claimToken.orEmpty(), entry.revision)
+                }.onFailure { Log.w(TAG, "ack stale steer ${entry.id} failed", it) }
+                continue
+            }
             val text = entry.bodyText?.takeIf { it.isNotBlank() }
                 ?: "（插话内容缺失：${entry.bodyRef ?: "-"}）"
             accepted.add(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text(text))))
             claimed.add(entry)
         }
-        if (claimed.isNotEmpty()) pendingSteerAcks[session.id] = claimed
+        // 同一轮可能有多次 drain（工具检查点）：原子累加，别覆盖前一次未 ack 的 claim
+        if (claimed.isNotEmpty()) pendingSteerAcks.merge(session.id, claimed) { old, new -> old + new }
         return accepted
     }
 
@@ -939,6 +1458,9 @@ class ChatService(
 
     private fun sendQueuedMessage(session: ConversationSession, queued: QueuedMessage): Job {
         val conversationId = session.id
+        // 用户自己开口：连续自动续跑计数清零，并取消还没触发的合并续跑（这一轮会带上已写入的结果）
+        autoResumeStreak.remove(conversationId)
+        autoResumeJobs.remove(conversationId)?.cancel()
         // 新消息开始初始化前就清掉旧回复，初始化失败或任务启动前取消也不能留下旧预览。
         session.replyMessageId.value = null
         val job = launchGenerationJob(
@@ -1159,20 +1681,47 @@ class ChatService(
         runId: Uuid? = null,
     ): TurnResult {
         val member = agentTeamRepository.getMemberByConversation(session.id)
-        // 只有成员会话依赖 Run 库：恢复失败不能牵连普通/领队会话
-        if (member == null) return runAdmittedTurn(session, regenerateNodeId, null)
-        // 恢复屏障先于本进程第一次 RUNNING
+        // 领队回合也建 Run：计入根账本、留下终态与失败记录（普通会话没有队就保持不跟踪）
+        val leadRunId = if (member == null && runId == null) {
+            runCatching { createLeadRunIfTeam(session.id) }
+                .onFailure { Log.w(TAG, "create lead run failed", it) }
+                .getOrNull()
+        } else {
+            null
+        }
+        // 普通聊天（无 Run）保持旧路径；成员行已消失却带旧 runId 时与旧行为一致地不跟踪
+        if (member == null && leadRunId == null) {
+            return runAdmittedTurn(session, regenerateNodeId, runId = null, fence = null)
+        }
+        // 恢复屏障先于本进程第一次 RUNNING（领队与成员一致）
         awaitRunRecovery()
+        if (member == null) {
+            // LEAD：只 CAS RUNNING，不取成员 gate、不调 onFinished
+            val request = AdmitRequest(
+                runId = leadRunId,
+                conversationId = session.id,
+                teamId = null,
+                kind = AdmitKind.LEAD,
+            )
+            return runCoordinator.runAdmitted(request) { admission ->
+                dispatchAdmission(session, regenerateNodeId, admission, leadRunId)
+            }
+        }
         if (member.status == me.rerere.rikkahub.data.model.TeamMemberStatus.FAILED) {
             addError(IllegalStateException("failed teammate cannot generate"), session.id)
             return TurnResult.Failed
         }
         session.processingStatus.value = "等待团队并发名额…"
+        // 并发桶按根团队：整棵嵌套树共用根队名额（maxDepth=1 时 root 就是自己）
+        val request = AdmitRequest(
+            runId = runId,
+            conversationId = session.id,
+            teamId = member.teamId,
+            kind = AdmitKind.MEMBER,
+        )
         try {
-            return teamExecutionGate.withPermit(
-                team = member.teamId,
-                conversation = session.id,
-                limit = { settingsStore.awaitLoaded().agentTeamMaxMembers },
+            return runCoordinator.runAdmitted(
+                request = request,
                 onFinished = { elapsedMillis ->
                     try {
                         agentTeamRepository.updateMemberElapsed(session.id, elapsedMillis)
@@ -1180,22 +1729,36 @@ class ChatService(
                         addError(e, session.id)
                     }
                 },
-            ) {
+            ) { admission ->
                 session.processingStatus.value = null
-                // 每次实际执行都要过 gate；审批等待释放名额，恢复时重新取
-                val running = markRunRunning(runId)
-                if (runId != null && running == null) {
-                    // 已跟踪的 Run 进不了 RUNNING（终态/冲突/缺行）：不执行、不落转录
-                    addError(
-                        IllegalStateException("Run $runId 无法进入 RUNNING，已放弃本次执行"),
-                        session.id,
-                    )
-                    return@withPermit TurnResult.Failed
-                }
-                runAdmittedTurn(session, regenerateNodeId, runId)
+                dispatchAdmission(session, regenerateNodeId, admission, runId)
             }
         } finally {
             session.processingStatus.value = null
+        }
+    }
+
+    /** 准入结果分派：Admitted 按旧时点发事件再跑；Rejected fail-closed，不落转录、不改队列 */
+    private suspend fun dispatchAdmission(
+        session: ConversationSession,
+        regenerateNodeId: Uuid?,
+        admission: Admission,
+        requestedRunId: Uuid?,
+    ): TurnResult = when (admission) {
+        is Admission.Admitted -> {
+            emitRunEvent(admission.run)
+            runAdmittedTurn(session, regenerateNodeId, admission.run.runId, admission.fence)
+        }
+
+        is Admission.Untracked -> runAdmittedTurn(session, regenerateNodeId, null, null)
+
+        is Admission.Rejected -> {
+            Log.w(TAG, "run admission rejected for $requestedRunId: ${admission.reason} state=${admission.current?.state}")
+            addError(
+                IllegalStateException("Run $requestedRunId 无法进入 RUNNING（${admission.reason}），已放弃本次执行"),
+                session.id,
+            )
+            TurnResult.Failed
         }
     }
 
@@ -1203,6 +1766,7 @@ class ChatService(
         session: ConversationSession,
         regenerateNodeId: Uuid?,
         runId: Uuid?,
+        fence: FenceToken?,
     ): TurnResult {
         val conversationId = session.id
         // 先清理上一轮状态；确定历史后，仅为真正的续写恢复消息 ID。
@@ -1212,6 +1776,8 @@ class ChatService(
         // 生成开始前失败时通知只用来取消 Live Update，用不到发送者名称
         var senderName = ""
         try {
+            // 领队答复先注入转录，再算本轮历史，答复才会进入本轮上下文
+            drainTeamAnswers(session)
             val settings = settingsStore.awaitLoaded()
             // 清掉上一轮的建议；没法继续执行的工具调用发给模型会被拒绝，先去掉。
             // 重新生成时只清理要发给模型的节点，被重新生成的节点保持原样，旧回复留作分支
@@ -1251,23 +1817,11 @@ class ChatService(
             val continuation = history.lastOrNull()?.takeIf { it.role == MessageRole.ASSISTANT }
             // 本段续写的助手消息已带多少步，就只加这之后的增量（新 attempt 的 runStepsUsed 仍为 0）
             val startMessageStepCount = continuation?.stepCount ?: 0
-            // 预算已用尽且没有可收尾的助手消息：明确失败，不重置步数继续请求模型
-            if (trackedRun != null && continuation == null &&
-                trackedRun.stepsUsed >= (trackedRun.stepLimit ?: AgentRunRules.DEFAULT_STEP_LIMIT)
-            ) {
-                addError(
-                    IllegalStateException(
-                        "该 Run 步数预算已用尽且没有可收尾的助手消息；不重置步数，请先扩展预算或重开任务。"
-                    ),
-                    conversationId,
-                )
-                return TurnResult.Failed
-            }
             val stepBaseline = AgentRunLifecycle.baseline(trackedRun, startMessageStepCount)
             // 精确绑定本轮回复锚点：审批续跑只认这条消息，不猜会话最新一轮
             var boundReply: Uuid? = session.replyMessageId.value
             if (trackedRun != null && boundReply != null) {
-                bindRunReply(trackedRun.runId, boundReply)
+                bindRunReply(trackedRun.runId, boundReply, fence)
             }
 
             val turn = requestFactory.createContext(settings, conversation)
@@ -1295,16 +1849,63 @@ class ChatService(
             } else {
                 baseRequest
             }
+            // 预算已用尽且没有可收尾的助手消息：明确失败，不重置步数继续请求模型
+            if (trackedRun != null && continuation == null && trackedRun.stepsUsed >= request.maxSteps) {
+                addError(
+                    IllegalStateException(
+                        "该 Run 步数预算已用尽且没有可收尾的助手消息；不重置步数，请先扩展预算或重开任务。"
+                    ),
+                    conversationId,
+                )
+                return TurnResult.Failed
+            }
             val hooks = object : AgentHooks by baseHooks {
                 override suspend fun drainSteer(): List<UIMessage> =
                     drainSteers(session, trackedRun?.runId)
 
                 override suspend fun finishStep(message: UIMessage, newPartsFrom: Int): UIMessage {
                     val finished = baseHooks.finishStep(message, newPartsFrom)
-                    recordRunSteps(trackedRun?.runId, stepBaseline, finished.stepCount ?: 0)
+                    recordRunSteps(trackedRun?.runId, stepBaseline, finished.stepCount ?: 0, fence)
                     // 跟随检查点提交：只有走完这一步才确认插话
                     ackPendingSteers(session.id)
                     return finished
+                }
+
+                // operation + 检查点只对受跟踪的 Run 落库；普通聊天（runId 为 null）不写表，行为不变
+                override suspend fun onToolStarted(toolCallId: String, toolName: String, input: String) {
+                    val run = trackedRun ?: return
+                    val token = fence
+                    if (token == null) {
+                        Log.w(TAG, "tool operation skipped: no active fence")
+                        return
+                    }
+                    operationRecorder.onToolStarted(run, token, toolCallId, toolName, input)
+                }
+
+                override suspend fun onToolFinished(toolCallId: String, output: String?, error: Throwable?) {
+                    val run = trackedRun ?: return
+                    // 受理回执：该 call 以 Accepted 结束，后台结果只能由 receive_events 交付
+                    val receipt = acceptedReceiptOf(output)
+                    if (receipt != null) {
+                        val accepted = operationRuntime.accept(
+                            OperationAccept(
+                                runId = run.runId,
+                                attemptNo = run.attemptNo,
+                                originCallId = toolCallId,
+                                deliveryKey = receipt.deliveryKey,
+                                output = output,
+                            )
+                        )
+                        val ok = accepted is me.rerere.rikkahub.runtime.OperationAcceptResult.Accepted ||
+                            accepted is me.rerere.rikkahub.runtime.OperationAcceptResult.AlreadyAccepted
+                        if (!ok) {
+                            // 受理没落成：不能只留回执，退回 R2 的结算并留痕
+                            Log.w(TAG, "operation accept not applied: $accepted")
+                            operationRecorder.onToolFinished(run.runId, run.attemptNo, toolCallId, output, error)
+                        }
+                        return
+                    }
+                    operationRecorder.onToolFinished(run.runId, run.attemptNo, toolCallId, output, error)
                 }
             }
             var finishReason: AgentFinishReason? = null
@@ -1321,7 +1922,7 @@ class ChatService(
                             session.replyMessageId.value = event.message.id
                             if (trackedRun != null && boundReply != event.message.id) {
                                 boundReply = event.message.id
-                                bindRunReply(trackedRun.runId, event.message.id)
+                                bindRunReply(trackedRun.runId, event.message.id, fence)
                             }
                             // 只追加增量文本；失败不能打断生成链
                             runCatching { streamChunks.append(conversationId, event.message) }
@@ -1373,6 +1974,37 @@ class ChatService(
             val reason = checkNotNull(finishReason)
             // 最终转录已 flush：先提交本轮 Run 迁移，再做 PostTurn 维护（条件保持原样）
             commitRunAfterTurn(runId, reason, completedSnapshot)
+            // T2：转录已落库才 ACK；成功确认的事件再结算对应 operation（ACCEPTED 的出口）
+            runCatching {
+                val acked = operationInbox.ackPending(conversationId)
+                for (entry in acked) {
+                    val memberRunId = entry.runId ?: continue
+                    val key = OperationRuntime.deliveryKeyFor(memberRunId)
+                    for (operation in operationRuntime.listAcceptedByDelivery(key)) {
+                        when (entry.kind) {
+                            me.rerere.rikkahub.data.model.MailboxKind.FAILURE ->
+                                operationRuntime.settleFailed(operation, "member_failed")
+                            // 通知类不代表任务成败：保持 ACCEPTED，等真正的 RESULT/FAILURE
+                            me.rerere.rikkahub.data.model.MailboxKind.NOTICE -> Unit
+                            else -> operationRuntime.settleAccepted(operation, entry.bodyText?.take(500))
+                        }
+                    }
+                }
+                // T2 结算之后才判：本轮把最后一个结果消费掉时，Run 应从等待态正常收尾
+                if (runId != null) {
+                    val run = agentRunStore.get(runId)
+                    val stillOpen = operationStore.listForRun(runId)
+                        .any { me.rerere.rikkahub.data.model.RuntimeOperationRules.isOpen(it.state) }
+                    if (run != null && run.state == me.rerere.rikkahub.data.model.AgentRunState.WAITING_OPERATION && !stillOpen) {
+                        agentRunStore.transition(
+                            runId = runId,
+                            expectedRevision = run.stateRevision,
+                            to = me.rerere.rikkahub.data.model.AgentRunState.COMPLETED,
+                            reason = "operations_consumed",
+                        )
+                    }
+                }
+            }.onFailure { Log.w(TAG, "inbox ack/settle failed", it) }
             if (reason is AgentFinishReason.Completed) {
                 // 拿不到最终消息只是自动压缩做不了：记一条维护失败，不能把已完成的任务改判成失败
                 val finalMessage = completedMessage
@@ -1887,6 +2519,10 @@ class ChatService(
         discardQueuedMessages(session)
         session.replace(newConversation(conversationId), existsInDatabase = false) { previous ->
             conversationRepo.getConversationById(conversationId)?.let { conversationRepo.deleteConversation(it) }
+            // 该会话自己就是一队的 lead：先级联删整支队，别留下 lead_conversation_id 悬空的孤儿队
+            runCatching {
+                agentTeamRepository.ownedTeam(conversationId)?.let { agentTeamRepository.deleteTeamCascade(it.id) }
+            }.onFailure { Log.w(TAG, "delete team cascade for $conversationId failed", it) }
             // 队友会话被删时同步清名册行，避免团队视图里留下打不开的孤儿成员；
             // 先记下这一行，撤销删除时放回去，否则撤销后会变成主列表里的野会话
             agentTeamRepository.getMemberByConversation(conversationId)?.let { deletedTeamMembers[conversationId] = it }

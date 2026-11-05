@@ -45,8 +45,22 @@ class ChatServiceTeamRuntime(
 
     override suspend fun awaitReady() = chatService.awaitRunRecoveryReady()
 
+    override suspend fun completeDeferredTool(
+        conversationId: Uuid,
+        toolName: String,
+        handle: String,
+        output: List<UIMessagePart>,
+        deliveryKey: String?,
+    ): Boolean = chatService.completeDeferredToolCall(conversationId, toolName, handle, output, deliveryKey)
+
+    override suspend fun notifyInbox(conversationId: Uuid, deliveryKey: String) =
+        chatService.resumeForInbox(conversationId)
+
     override suspend fun notice(conversationId: Uuid, content: List<UIMessagePart>, messageId: Uuid?) =
         chatService.sendTeamNotice(conversationId, content, messageId)
+
+    override suspend fun steer(conversationId: Uuid, content: List<UIMessagePart>): Boolean =
+        chatService.steerGeneration(conversationId, content)
 
     override fun resumeQueue(conversationId: Uuid) = chatService.resumeMessageQueue(conversationId)
 

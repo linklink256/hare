@@ -184,6 +184,38 @@ interface AgentRunDAO {
     )
     fun observeLatestRunPerConversationForTeam(teamId: String): Flow<List<AgentRunTeamSummaryRow>>
 
+    /** 同一任务的全部尝试（预算总账用）；按创建时间升序，调用方自己求和 */
+    @Query("SELECT * FROM agent_run WHERE task_id = :taskId ORDER BY created_at ASC, id ASC")
+    suspend fun listRunsByTask(taskId: String): List<AgentRunEntity>
+
+    /**
+     * 递归取全部后代 Run（按 `parent_run_id` 逐层展开，深度不限）。
+     * 用 UNION 去重而不是 UNION ALL：重复父边或成环时不会无限递归。
+     */
+    @Query(
+        """
+        WITH RECURSIVE descendants(id) AS (
+            SELECT id FROM agent_run WHERE parent_run_id = :runId
+            UNION
+            SELECT r.id FROM agent_run r JOIN descendants d ON r.parent_run_id = d.id
+        )
+        SELECT * FROM agent_run WHERE id IN (SELECT id FROM descendants)
+        ORDER BY created_at ASC, id ASC
+        """
+    )
+    suspend fun listDescendantRuns(runId: String): List<AgentRunEntity>
+
+    /**
+     * 某批团队下仍在跑的 Run（取消级联用）。
+     * 终态字面量与 AgentRunRules.isTerminal 对齐：COMPLETED/FAILED/CANCELLED/INTERRUPTED。
+     */
+    @Query(
+        "SELECT * FROM agent_run WHERE team_id IN (:teamIds) " +
+            "AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED') " +
+            "ORDER BY created_at ASC, id ASC"
+    )
+    suspend fun listLiveRunsByTeams(teamIds: List<String>): List<AgentRunEntity>
+
     // ---------- 辅助 ----------
 
     /** 某状态的 Run 数：恢复/调度侧只读统计，不提供按 Run 删除（历史不可抹） */

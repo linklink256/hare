@@ -42,6 +42,17 @@ interface AgentMailboxStore {
 
     suspend fun findByIdempotencyKey(idempotencyKey: String): AgentMailboxEntry?
 
+    /**
+     * 只领取 [kinds] 里的类别：团队领队用它跳过 RESULT/FAILURE，
+     * 让队友结果只通过工具通道（expect_report / 回合结束补投）消费。
+     */
+    suspend fun claimNextOfKinds(
+        targetConversationId: Uuid,
+        kinds: Set<MailboxKind>,
+        now: Instant = Instant.now(),
+        ttlMillis: Long = AgentMailboxRules.CLAIM_TTL_MILLIS,
+    ): MailboxClaimResult
+
     /** 取该 target 的下一条可领取项（PENDING 或租约过期的 CLAIMED，FIFO）；没有则 [MailboxClaimResult.None] */
     suspend fun claimNext(
         targetConversationId: Uuid,
@@ -66,6 +77,22 @@ interface AgentMailboxStore {
         expectedRevision: Long,
         now: Instant = Instant.now(),
     ): MailboxAckResult
+
+    /** 幽灵数据清理：某 target 下早于 cutOff 且未 ACK 的行（最多 limit 条） */
+    suspend fun listUndeliveredBefore(
+        targetConversationId: Uuid,
+        cutOff: Instant,
+        limit: Int = 64,
+    ): List<AgentMailboxEntry>
+
+    /** 自动唤醒：按 target+source 找最近一条未 ACK 的 RESULT/FAILURE/ASK（提问也要能唤醒） */
+    suspend fun findUndeliveredWake(targetConversationId: Uuid, sourceConversationId: Uuid): AgentMailboxEntry?
+
+    /**
+     * 工具通道取结果：按 target+source 找最近一条未 ACK 的 RESULT/FAILURE。
+     * 与 [listForTarget] 不同，它不受邮箱里已 ACK 历史行数影响。
+     */
+    suspend fun findUndeliveredResult(targetConversationId: Uuid, sourceConversationId: Uuid): AgentMailboxEntry?
 
     suspend fun listForTarget(targetConversationId: Uuid, limit: Int = 64): List<AgentMailboxEntry>
 
@@ -117,6 +144,51 @@ class AgentMailboxRepository(
     }
 
     override suspend fun get(id: Uuid): AgentMailboxEntry? = dao.get(id.toString())?.toModel()
+
+    override suspend fun claimNextOfKinds(
+        targetConversationId: Uuid,
+        kinds: Set<MailboxKind>,
+        now: Instant,
+        ttlMillis: Long,
+    ): MailboxClaimResult = database.withTransaction {
+        val staleBefore = AgentMailboxRules.claimStaleBefore(now, ttlMillis)
+        var attempt = 0
+        while (attempt < CLAIM_ATTEMPTS) {
+            attempt++
+            val row = dao.findClaimableOfKinds(
+                target = targetConversationId.toString(),
+                kinds = kinds.map { it.name },
+                pendingState = MailboxDeliveryState.PENDING.name,
+                claimedState = MailboxDeliveryState.CLAIMED.name,
+                staleBefore = staleBefore,
+            ) ?: return@withTransaction MailboxClaimResult.None
+            val entry = row.toModel()
+            val plan = AgentMailboxRules.planClaim(entry, now, ttlMillis)
+            if (plan !is MailboxClaimPlan.Apply) return@withTransaction MailboxClaimResult.None
+            val token = Uuid.random().toString()
+            val affected = dao.claimCas(
+                id = entry.id.toString(),
+                expectedRevision = entry.revision,
+                pendingState = MailboxDeliveryState.PENDING.name,
+                claimedState = MailboxDeliveryState.CLAIMED.name,
+                staleBefore = staleBefore,
+                token = token,
+                now = now.toEpochMilli(),
+            )
+            if (affected == 1) {
+                return@withTransaction MailboxClaimResult.Claimed(
+                    entry.copy(
+                        deliverState = MailboxDeliveryState.CLAIMED,
+                        revision = plan.nextRevision,
+                        attemptCount = plan.attemptCount,
+                        claimToken = token,
+                        claimedAt = now,
+                    )
+                )
+            }
+        }
+        MailboxClaimResult.None
+    }
 
     override suspend fun findByIdempotencyKey(idempotencyKey: String): AgentMailboxEntry? {
         val key = AgentMailboxRules.normalizeIdempotencyKey(idempotencyKey) ?: return null
@@ -245,6 +317,35 @@ class AgentMailboxRepository(
             }
         }
     }
+
+    override suspend fun listUndeliveredBefore(
+        targetConversationId: Uuid,
+        cutOff: Instant,
+        limit: Int,
+    ): List<AgentMailboxEntry> = dao.listUndeliveredBefore(
+        target = targetConversationId.toString(),
+        ackedState = MailboxDeliveryState.ACKED.name,
+        cutOff = cutOff.toEpochMilli(),
+        limit = limit,
+    ).map { it.toModel() }
+
+    override suspend fun findUndeliveredWake(
+        targetConversationId: Uuid,
+        sourceConversationId: Uuid,
+    ): AgentMailboxEntry? = dao.findUndeliveredWake(
+        target = targetConversationId.toString(),
+        source = sourceConversationId.toString(),
+        ackedState = MailboxDeliveryState.ACKED.name,
+    )?.toModel()
+
+    override suspend fun findUndeliveredResult(
+        targetConversationId: Uuid,
+        sourceConversationId: Uuid,
+    ): AgentMailboxEntry? = dao.findUndeliveredResult(
+        target = targetConversationId.toString(),
+        source = sourceConversationId.toString(),
+        ackedState = MailboxDeliveryState.ACKED.name,
+    )?.toModel()
 
     override suspend fun listForTarget(targetConversationId: Uuid, limit: Int): List<AgentMailboxEntry> {
         require(limit in 1..1000) { "limit must be in 1..1000" }
